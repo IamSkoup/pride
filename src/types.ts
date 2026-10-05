@@ -1,0 +1,45 @@
+export type Role = 'owner' | 'admin' | 'moderator' | 'member';
+export type ChatKind = 'dm' | 'group' | 'channel';
+export type MediaKind = 'image' | 'video' | 'audio' | 'file';
+export type Profile = {
+  uid: string;
+  username: string;
+  displayName: string;
+  bio?: string;
+  avatar?: string;
+  cover?: string;
+  mood?: string;
+  roar?: string;
+  roarUntil?: number;
+  createdAt: number;
+};
+export type Chat = {
+  id: string;
+  kind: ChatKind;
+  title: string;
+  description?: string;
+  avatar?: string;
+  creatorId: string;
+  public?: boolean;
+  createdAt: number;
+  updatedAt: number;
+  lastText?: string;
+  lastSenderId?: string;
+  inviteCode?: string;
+  pinnedMessageId?: string;
+};
+export type Media = { kind: MediaKind; name: string; url: string; size: number; mime: string };
+export type Message = {
+  id: string;
+  chatId: string;
+  senderId: string;
+  text: string;
+  media?: Media;
+  replyTo?: string;
+  forwardedFrom?: string;
+  createdAt: number;
+  editedAt?: number;
+  deleted?: boolean;
+  status?: 'sending' | 'sent' | 'error';
+};
+export type Notice = { id: string; type: string; title: string; body: string; chatId?: string; createdAt: number; read?: boolean };

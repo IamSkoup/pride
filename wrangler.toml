@@ -1,0 +1,7 @@
+name = "pride-messenger-worker"
+main = "worker/index.ts"
+compatibility_date = "2026-09-01"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "56fef16054be4d5eb45c9e5d04a4a2ef"

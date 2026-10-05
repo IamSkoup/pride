@@ -1,0 +1,13 @@
+16:22:11.036 [NamespaceSystem-akka.actor.default-dispatcher-4] INFO akka.event.slf4j.Slf4jLogger - Slf4jLogger started
+16:22:11.265 [main] INFO com.firebase.server.forge.App$ - Listening at 127.0.0.1:9000
+16:22:11.762 [NamespaceSystem-akka.actor.default-dispatcher-4] INFO com.firebase.core.namespace.NamespaceActor - demo-pride-default-rtdb successfully activated FBKV (SurveyIdle(0)) wait: 174ms, init: 0ms
+16:22:11.960 [NamespaceSystem-blocking-namespace-operation-dispatcher-6] INFO com.firebase.core.namespace.StateManager - Namespace demo-pride-default-rtdb status Active to Active
+16:22:48.715 [FirebaseWorkerPool-1-3] WARN com.firebase.core.persistence.backend.dummy.EmulatorMetadataPersistence - Multiple projectIds are not recommended in single project mode. Requested 
+namespace demo-pride, but the emulator is configured for demo-pride-default-rtdb. To 
+opt-out of single project mode add/set the singleProjectMode: false property in 
+the firebase.json emulators config. 
+16:22:48.719 [NamespaceSystem-akka.actor.default-dispatcher-4] INFO com.firebase.core.namespace.NamespaceActor - demo-pride successfully activated FBKV (SurveyIdle(0)) wait: 1ms, init: 0ms
+16:22:48.746 [NamespaceSystem-blocking-namespace-operation-dispatcher-8] INFO com.firebase.core.namespace.StateManager - Namespace demo-pride status Active to Active
+16:22:49.229 [FirebaseWorkerPool-1-2] WARN com.firebase.server.forge.App$ - Received service account token eyJh...ifQ., assuming ownership.
+16:22:49.372 [FirebaseWorkerPool-1-3] WARN com.firebase.server.forge.App$ - Received service account token eyJh...ifQ., assuming ownership.
+16:22:49.595 [FirebaseWorkerPool-1-4] WARN com.firebase.server.forge.App$ - Received service account token eyJh...ifQ., assuming ownership.

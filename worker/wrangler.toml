@@ -1,0 +1,15 @@
+name = "pride-messenger-worker"
+main = "index.ts"
+compatibility_date = "2026-10-05"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "56fef16054be4d5eb45c9e5d04a4a2ef"
+
+[vars]
+FIREBASE_PROJECT_ID = "pride-messenger"
+FIREBASE_DATABASE_URL = "https://pride-messenger-default-rtdb.europe-west1.firebasedatabase.app"
+FIREBASE_STORAGE_BUCKET = "pride-messenger.firebasestorage.app"
+FIREBASE_WEB_API_KEY = "AIzaSyDZuKt8e-cq7PSM0wEIwjjnZXiTRemuDjg"
+FIREBASE_SERVICE_ACCOUNT_EMAIL = "firebase-adminsdk-fbsvc@pride-messenger.iam.gserviceaccount.com"
+FRONTEND_ORIGIN = "https://iamskoup.github.io"
