@@ -1,2 +1,1 @@
-Public Key: BCp0FmDtn-KMiizil-7jPNckcgDgA1XKXHOZfTrYOD_LrtijcGw2GjrEnLK9OzWkmkrcsCprv04PrF7wEhHMxdE
-Private Key: rtijcGw2GjrEnLK9OzWkmkrcsCprv04PrF7wEhHMxdE
+
