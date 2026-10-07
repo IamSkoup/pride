@@ -17,10 +17,12 @@ export function ProfilePage({ settings = false }: { settings?: boolean }) {
   const [name, setName] = useState(''); const [username, setUsername] = useState(''); const [bio, setBio] = useState('');
   const [mood, setMood] = useState('На связи'); const [roar, setRoar] = useState(''); const [busy, setBusy] = useState(false);
   const [theme] = useFirebaseValue<string>(user ? `userSettings/${user.uid}/theme` : null);
+  const [notificationSettings] = useFirebaseValue<{ notifications?: { enabled?: boolean; preview?: boolean } }>(user ? `userSettings/${user.uid}` : null);
   const [devices] = useFirebaseValue<Record<string, Device>>(user ? `devices/${user.uid}` : null);
   const fileInput = useRef<HTMLInputElement>(null);
   useEffect(() => { if (profile) { setName(profile.displayName); setUsername(profile.username); setBio(profile.bio || ''); setMood(profile.mood || 'На связи'); setRoar(profile.roarUntil && profile.roarUntil > Date.now() ? profile.roar || '' : ''); } }, [profile]);
-  useEffect(() => { document.documentElement.dataset.theme = theme || 'dark'; }, [theme]);
+  const activeTheme = theme === 'light' ? 'day' : theme === 'dark' || !theme ? 'night' : theme;
+  useEffect(() => { document.documentElement.dataset.theme = activeTheme; }, [activeTheme]);
   async function save() {
     if (!user || !profile) return; setBusy(true);
     try {
@@ -34,6 +36,11 @@ export function ProfilePage({ settings = false }: { settings?: boolean }) {
     setBusy(true); try { await updateMyProfile(user.uid, profile, { avatar: await uploadAvatar(user.uid, file) }); toast('Аватар обновлён'); } catch (error) { toast((error as Error).message, 'error'); } finally { setBusy(false); }
   }
   async function changeTheme(next: string) { if (!user) return; await set(ref(requireDb(), `userSettings/${user.uid}/theme`), next); }
+  async function changeNotificationSetting(key: 'enabled' | 'preview', value: boolean) {
+    if (!user) return;
+    try { await set(ref(requireDb(), `userSettings/${user.uid}/notifications/${key}`), value); }
+    catch (error) { toast((error as Error).message, 'error'); }
+  }
   async function enablePush() {
     if (!user || !app) return;
     try {
@@ -48,7 +55,13 @@ export function ProfilePage({ settings = false }: { settings?: boolean }) {
       const deviceId = getDeviceId();
       await set(ref(requireDb(), `devices/${user.uid}/${deviceId}`), { name: `${navigator.platform || 'Устройство'} · ${browserName()}`, token, addedAt: serverTimestamp() });
       toast('Уведомления включены на этом устройстве');
-    } catch (error) { toast((error as Error).message, 'error'); }
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      const detail = code === 'messaging/token-subscribe-failed'
+        ? 'Firebase Messaging не принял запрос регистрации браузера. Проверьте новый публичный VAPID key в GitHub Actions, включённые Firebase Cloud Messaging API и корректное ограничение Web API key.'
+        : (error as Error).message;
+      toast(detail, 'error');
+    }
   }
   async function removeDevice(id: string) {
     if (!user) return;
@@ -59,8 +72,8 @@ export function ProfilePage({ settings = false }: { settings?: boolean }) {
   async function exit() { await logout(); navigate('/'); }
   if (!profile) return <div className="page-loading">Загрузка профиля…</div>;
   return <div className="profile-page"><header className="profile-top"><Link to="/chats" className="back-link"><ArrowLeft size={19}/> К чатам</Link><Link to={settings ? '/profile' : '/settings'} className="back-link"><Settings size={17}/>{settings ? 'Профиль' : 'Настройки'}</Link></header><div className="profile-layout"><aside className="profile-preview"><div className="profile-cover"><span className="profile-cover-sun"/></div><div className="profile-preview-body"><div className="profile-avatar-wrap"><Avatar profile={profile} size={86}/><button className="camera-btn" onClick={() => fileInput.current?.click()} aria-label="Изменить аватар"><Camera size={16}/></button><input ref={fileInput} type="file" accept="image/*" hidden onChange={avatar}/></div><h1>{profile.displayName}</h1><p className="handle">@{profile.username}</p>{profile.roar && profile.roarUntil && profile.roarUntil > Date.now() && <div className="roar">{profile.roar}</div>}<p className="bio-preview">{profile.bio || 'Расскажите о себе — это увидят ваши друзья.'}</p><div className="profile-mood"><span className="online-dot"/>{profile.mood || 'На связи'}</div></div></aside><main className="profile-content"><span className="eyebrow">ВАШЕ ПРОСТРАНСТВО</span><h2>{settings ? 'Настройки' : 'Мой профиль'}</h2><p className="subtle">Управляйте тем, как вас видят и находят другие.</p><section className="settings-card"><div className="section-heading"><UserRound size={18}/><h3>Личные данные</h3></div><div className="two-col"><label>Имя<input value={name} maxLength={48} onChange={e => setName(e.target.value)}/></label><label>Username<input value={username} maxLength={24} onChange={e => setUsername(e.target.value)}/></label></div><label>О себе<textarea value={bio} maxLength={280} rows={3} onChange={e => setBio(e.target.value)} placeholder="Пара слов о себе"/></label><div className="two-col"><label>Настроение<select value={mood} onChange={e => setMood(e.target.value)}>{['На связи', 'Отдыхаю', 'В пути', 'Не беспокоить', 'Слушаю музыку'].map(v => <option key={v}>{v}</option>)}</select></label><label>Roar · исчезнет через 12 часов<input value={roar} maxLength={80} onChange={e => setRoar(e.target.value)} placeholder="Что у вас происходит?"/></label></div><button className="primary-btn" disabled={busy || !name.trim()} onClick={save}><Save size={17}/>{busy ? 'Сохранение…' : 'Сохранить профиль'}</button></section>
-    <section className="settings-card"><div className="section-heading"><Sun size={18}/><h3>Оформление</h3></div><div className="theme-choices"><button className={theme === 'dark' || !theme ? 'selected' : ''} onClick={() => changeTheme('dark')}>Тёмная саванна {(theme === 'dark' || !theme) && <Check size={16}/>}</button><button className={theme === 'light' ? 'selected' : ''} onClick={() => changeTheme('light')}>Светлый песок {theme === 'light' && <Check size={16}/>}</button></div></section>
-    <section className="settings-card"><div className="section-heading"><Bell size={18}/><h3>Уведомления и устройства</h3></div><p className="subtle">Включите push на каждом устройстве отдельно. Удаление устройства отключает уведомления для него.</p><button className="secondary-btn" onClick={enablePush}>Включить уведомления здесь</button><div className="devices">{Object.entries(devices || {}).map(([id, device]) => <div className="device-row" key={id}><span><strong>{device.name}</strong><small>Добавлено {device.addedAt ? new Date(device.addedAt).toLocaleDateString('ru-RU') : 'недавно'}</small></span><button className="icon-btn danger" onClick={() => removeDevice(id)} title="Удалить устройство"><Trash2 size={17}/></button></div>)}{!Object.keys(devices || {}).length && <p className="muted">Устройств для уведомлений пока нет.</p>}</div></section>
+    <section className="settings-card"><div className="section-heading"><Sun size={18}/><h3>Оформление</h3></div><div className="theme-choices">{([['day','Дневная саванна'],['sunset','Вечерняя саванна'],['night','Ночная саванна']] as const).map(([value,label])=><button key={value} className={activeTheme===value?'selected':''} onClick={()=>changeTheme(value)}>{label}{activeTheme===value&&<Check size={16}/>}</button>)}</div></section>
+    <section className="settings-card"><div className="section-heading"><Bell size={18}/><h3>Уведомления и устройства</h3></div><p className="subtle">Push включается на каждом устройстве отдельно. Настройка ниже применяется ко всем устройствам.</p><label className="check-line"><input type="checkbox" checked={notificationSettings?.notifications?.enabled !== false} onChange={e => changeNotificationSetting('enabled', e.target.checked)}/> Получать push-уведомления</label><label className="check-line"><input type="checkbox" checked={notificationSettings?.notifications?.preview !== false} onChange={e => changeNotificationSetting('preview', e.target.checked)}/> Показывать текст сообщений в уведомлениях</label><button className="secondary-btn" onClick={enablePush}>Включить уведомления здесь</button><div className="devices">{Object.entries(devices || {}).map(([id, device]) => <div className="device-row" key={id}><span><strong>{device.name}</strong><small>Добавлено {device.addedAt ? new Date(device.addedAt).toLocaleDateString('ru-RU') : 'недавно'}</small></span><button className="icon-btn danger" onClick={() => removeDevice(id)} title="Удалить устройство"><Trash2 size={17}/></button></div>)}{!Object.keys(devices || {}).length && <p className="muted">Устройств для уведомлений пока нет.</p>}</div></section>
     <section className="settings-card"><div className="section-heading"><Shield size={18}/><h3>Безопасность</h3></div><p className="subtle">Пароль можно сменить по ссылке из письма на {user?.email}.</p><div className="settings-actions"><button className="secondary-btn" onClick={sendReset}>Сменить пароль</button><button className="text-danger" onClick={exit}><LogOut size={17}/> Выйти из аккаунта</button></div></section></main></div></div>;
 }
 function getDeviceId() { let id = localStorage.getItem('pride-device-id'); if (!id) { id = crypto.randomUUID(); localStorage.setItem('pride-device-id', id); } return id; }

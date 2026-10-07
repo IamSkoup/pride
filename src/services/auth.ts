@@ -65,7 +65,10 @@ export async function usernameAvailable(usernameInput: string) {
   const base = import.meta.env.VITE_WORKER_URL;
   if (!base) throw new Error('Cloudflare Worker не настроен.');
   const response = await fetch(`${base.replace(/\/$/, '')}/api/auth/check-username`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) });
-  if (!response.ok) throw new Error('Не удалось проверить username.');
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(payload.error || `Не удалось проверить username (HTTP ${response.status}).`);
+  }
   return ((await response.json()) as { available: boolean }).available;
 }
 export async function updateMyProfile(uid: string, before: Profile, changes: Partial<Pick<Profile, 'displayName' | 'bio' | 'avatar' | 'cover' | 'mood' | 'roar' | 'roarUntil' | 'username'>>) {

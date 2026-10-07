@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-export default defineConfig({
-  base: '/pride/',
+export default defineConfig(({ command }) => ({
+  // GitHub Pages serves from /pride; Vite dev server remains at the origin root.
+  base: command === 'build' ? '/pride/' : '/',
   plugins: [react()],
   build: {
     rollupOptions: {
@@ -15,4 +16,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

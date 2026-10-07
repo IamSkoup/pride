@@ -77,7 +77,14 @@ export async function editMessage(chatId: string, messageId: string, text: strin
 }
 export async function deleteMessage(chatId: string, messageId: string, forEveryone: boolean, uid: string) {
   const database = requireDb();
-  if (forEveryone) await update(ref(database, `messages/${chatId}/${messageId}`), { deleted: true, text: '', media: null });
+  if (forEveryone) {
+    const message = (await get(ref(database, `messages/${chatId}/${messageId}`))).val() as Message | null;
+    if (message?.media?.url) {
+      const response = await apiFetch('/api/media/delete', { method: 'POST', body: JSON.stringify({ chatId, messageId, path: message.media.url }) });
+      if (!response.ok) throw new Error(await responseError(response, 'Не удалось удалить вложение из хранилища.'));
+    }
+    await update(ref(database, `messages/${chatId}/${messageId}`), { deleted: true, text: '', media: null });
+  }
   else await set(ref(database, `hiddenMessages/${uid}/${chatId}/${messageId}`), true);
 }
 export async function reactToMessage(chatId: string, messageId: string, uid: string, emoji: string | null) {
@@ -113,8 +120,8 @@ export async function uploadChatMedia(chatId: string, uid: string, file: File, o
     xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
     xhr.upload.onprogress = event => { if (event.lengthComputable) onProgress?.(Math.round(event.loaded / event.total * 100)); };
-    xhr.onerror = () => reject(new Error('Не удалось загрузить файл.'));
-    xhr.onload = () => { if (xhr.status >= 200 && xhr.status < 300) resolve((JSON.parse(xhr.responseText) as { path: string }).path); else reject(new Error('Не удалось загрузить файл.')); };
+    xhr.onerror = () => reject(new Error('Сбой сети при загрузке файла. Проверьте соединение и повторите попытку.'));
+    xhr.onload = () => { if (xhr.status >= 200 && xhr.status < 300) resolve((JSON.parse(xhr.responseText) as { path: string }).path); else { let reason = 'Не удалось загрузить файл.'; try { reason = JSON.parse(xhr.responseText).error || reason; } catch {} reject(new Error(reason)); } };
     xhr.send(file);
   });
   return { kind, name: safeName(file.name), url: path, size: file.size, mime: file.type || 'application/octet-stream' };
@@ -132,7 +139,8 @@ export async function mediaObjectUrl(path: string): Promise<string> {
   const token = await requireAuth().currentUser?.getIdToken();
   if (!token) throw new Error('Войдите снова.');
   const response = await fetch(`${base.replace(/\/$/, '')}/api/media?path=${encodeURIComponent(path)}`, { headers: { Authorization: `Bearer ${token}` } });
-  if (!response.ok) throw new Error('Не удалось открыть файл.');
+  if (!response.ok) throw new Error(await responseError(response, 'Не удалось открыть файл.'));
   return URL.createObjectURL(await response.blob());
 }
+async function responseError(response: Response, fallback: string) { try { const payload = await response.json() as { error?: string }; return payload.error || fallback; } catch { return fallback; } }
 export function messagePreview(message: Message) { return message.deleted ? 'Сообщение удалено' : message.media ? `Вложение · ${message.media.name}` : message.text; }

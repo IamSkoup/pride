@@ -161,6 +161,22 @@ async function downloadMedia(env: Env, user: AuthUser, url: URL) {
   if (!response.ok) return json({ error: 'File unavailable' }, response.status === 404 ? 404 : 502);
   return new Response(response.body, { headers: { 'Content-Type': response.headers.get('Content-Type') || 'application/octet-stream', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 }
+async function deleteMedia(request: Request, env: Env, user: AuthUser) {
+  const input = await request.json().catch(() => ({})) as { chatId?: string; messageId?: string; path?: string };
+  if (!safeId(input.chatId) || !safeId(input.messageId) || typeof input.path !== 'string') return json({ error: 'Некорректные данные файла.' }, 400);
+  const match = /^chats\/([a-zA-Z0-9_-]{5,150})\/([a-zA-Z0-9_-]{5,150})\/([^/]{1,160})$/.exec(input.path);
+  if (!match || match[1] !== input.chatId) return json({ error: 'Некорректный путь файла.' }, 400);
+  const [message, role] = await Promise.all([
+    dbRequest<{ senderId: string; media?: { url: string } } | null>(env, `messages/${input.chatId}/${input.messageId}`),
+    memberRole(env, input.chatId, user.uid),
+  ]);
+  if (!message || message.media?.url !== input.path || !role) return json({ error: 'Файл не найден или у вас нет доступа.' }, 404);
+  if (message.senderId !== user.uid && role !== 'owner' && role !== 'admin' && role !== 'moderator') return json({ error: 'Удалить это вложение может только автор или модератор.' }, 403);
+  const token = await accessToken(env);
+  const response = await fetch(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(env.FIREBASE_STORAGE_BUCKET)}/o/${encodeURIComponent(input.path)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok && response.status !== 404) return json({ error: `Не удалось удалить файл из Storage (HTTP ${response.status}).` }, 502);
+  return json({ deleted: true });
+}
 async function pushMessage(request: Request, env: Env, user: AuthUser) {
   const input = await request.json().catch(() => ({})) as { chatId?: string; messageId?: string };
   if (!safeId(input.chatId) || !safeId(input.messageId)) return json({ error: 'Invalid message' }, 400);
@@ -172,14 +188,27 @@ async function pushMessage(request: Request, env: Env, user: AuthUser) {
   const members = await dbRequest<Record<string, string> | null>(env, `chatMembers/${input.chatId}`);
   const sender = await dbRequest<{ displayName: string } | null>(env, `users/${user.uid}`);
   const title = sender?.displayName || 'Pride Messenger';
+  const chat = await dbRequest<{ title?: string; kind?: string } | null>(env, `chats/${input.chatId}`);
   const body = message.text?.slice(0, 100) || (message.media ? `Вложение · ${message.media.name}` : 'Новое сообщение');
   const token = await accessToken(env);
   let delivered = 0;
   for (const uid of Object.keys(members || {}).filter(uid => uid !== user.uid).slice(0, 200)) {
-    const devices = await dbRequest<Record<string, { token: string }> | null>(env, `devices/${uid}`);
-    for (const device of Object.values(devices || {}).slice(0, 10)) {
-      const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/messages:send`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ message: { token: device.token, data: { title, body, url: `/chat/${input.chatId}`, tag: `chat-${input.chatId}` }, webpush: { headers: { Urgency: 'high' } } } }) });
+    const [devices, settings, chatPrefs] = await Promise.all([
+      dbRequest<Record<string, { token: string }> | null>(env, `devices/${uid}`),
+      dbRequest<{ notifications?: { enabled?: boolean; preview?: boolean } } | null>(env, `userSettings/${uid}`),
+      dbRequest<{ mutedUntil?: number } | null>(env, `userChatPrefs/${uid}/${input.chatId}`),
+    ]);
+    if (settings?.notifications?.enabled === false || (chatPrefs?.mutedUntil || 0) > Date.now()) continue;
+    const visibleBody = settings?.notifications?.preview === false ? 'Новое сообщение в Pride Messenger' : body;
+    for (const [deviceId, device] of Object.entries(devices || {}).slice(0, 10)) {
+      const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/messages:send`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ message: { token: device.token, data: { title: chat?.title ? `${title} · ${chat.title}` : title, body: visibleBody, url: `/pride/chat/${input.chatId}`, tag: `chat-${input.chatId}` }, webpush: { headers: { Urgency: 'high' } } } }) });
       if (response.ok) delivered++;
+      else if (response.status === 404 || response.status === 400) {
+        const failure = await response.clone().json().catch(() => ({})) as { error?: { details?: Array<{ errorCode?: string }>; message?: string } };
+        const diagnostic = `${failure.error?.message || ''} ${failure.error?.details?.map(item => item.errorCode || '').join(' ') || ''}`;
+        if (/UNREGISTERED|registration-token-not-registered/i.test(diagnostic)) await dbRequest(env, `devices/${uid}/${deviceId}`, 'DELETE');
+        else console.error('FCM delivery failed', response.status, diagnostic.slice(0, 240));
+      } else console.error('FCM delivery failed', response.status);
     }
   }
   return json({ delivered });
@@ -205,10 +234,15 @@ export default {
         else if (url.pathname === '/api/chats/direct' && request.method === 'POST') result = await createDirect(request, env, user);
         else if (url.pathname === '/api/media' && request.method === 'POST') result = await uploadMedia(request, env, user, url);
         else if (url.pathname === '/api/media' && request.method === 'GET') result = await downloadMedia(env, user, url);
+        else if (url.pathname === '/api/media/delete' && request.method === 'POST') result = await deleteMedia(request, env, user);
         else if (url.pathname === '/api/push/message' && request.method === 'POST') result = await pushMessage(request, env, user);
         else result = json({ error: 'Not found' }, 404);
       }
-    } catch (error) { console.error(error); result = json({ error: 'Server error' }, 500); }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Unknown server error';
+      console.error('Pride Worker request failed:', reason);
+      result = json({ error: reason.startsWith('Database ') || reason.startsWith('OAuth ') || reason.startsWith('Storage ') ? `Сервис временно недоступен (${reason}).` : 'Внутренняя ошибка сервиса.' }, 500);
+    }
     const headers = new Headers(result.headers); Object.entries(cors).forEach(([key, value]) => headers.set(key, value));
     return new Response(result.body, { status: result.status, headers });
   }

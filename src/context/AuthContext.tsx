@@ -15,6 +15,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [theme] = useFirebaseValue<string>(user ? `userSettings/${user.uid}/theme` : null);
   useEffect(() => auth ? onAuthStateChanged(auth, next => { setUser(next); setAuthLoading(false); }) : void setAuthLoading(false), []);
   useEffect(() => { if (user) setPresence(user.uid).catch(() => {}); }, [user]);
-  useEffect(() => { document.documentElement.dataset.theme = theme || 'dark'; }, [theme]);
+useEffect(() => { document.documentElement.dataset.theme = theme === 'light' ? 'day' : theme === 'dark' || !theme ? 'night' : theme; }, [theme]);
   return <Context.Provider value={{ user, profile, loading: authLoading || Boolean(user && profileLoading) }}>{children}</Context.Provider>;
 }

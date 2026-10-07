@@ -24,6 +24,10 @@ try {
   assert.equal((await alice.ref('usernames/alice').get()).exists(), false);
   await assertSucceeds(bob.ref('usernames/bob').set({ uid: 'bob' }));
   await assertSucceeds(bob.ref().update({ 'users/bob': { uid: 'bob', username: 'bob', displayName: 'Bob', bio: '', createdAt: Date.now() }, 'userPrivate/bob/email': 'bob@example.com', 'userSettings/bob/theme': 'dark' }));
+  await assertSucceeds(alice.ref('userSettings/alice/theme').set('sunset'));
+  await assertFails(alice.ref('userSettings/alice/theme').set('ultraviolet'));
+  await assertSucceeds(alice.ref('userSettings/alice/notifications/preview').set(false));
+  await assertFails(bob.ref('userSettings/alice/notifications/preview').get());
   const chat = { id: 'group_test', kind: 'group', title: 'Test', description: '', creatorId: 'alice', public: false, inviteCode: 'abcdefgh12345678', createdAt: Date.now(), updatedAt: Date.now() };
   await assertFails(alice.ref('chats/dm_alice_bob').set({ ...chat, id: 'dm_alice_bob', kind: 'dm' }));
   await assertFails(alice.ref('chats/dm_alice_bob').set({ ...chat, id: 'dm_alice_bob' }));
