@@ -1,4 +1,8 @@
 export type Role = 'owner' | 'admin' | 'moderator' | 'member';
+export type RolePermission = 'edit_space' | 'invite_members' | 'remove_members' | 'manage_messages' | 'pin_messages' | 'publish_channel' | 'send_announcement' | 'manage_invites' | 'manage_roles';
+export type CustomRole = { id: string; name: string; color: string; priority: number; permissions: Partial<Record<RolePermission, boolean>> };
+export type PollOption = { id: string; text: string };
+export type ThemeName = 'day' | 'evening' | 'night';
 export type ChatKind = 'dm' | 'group' | 'channel';
 export type MediaKind = 'image' | 'video' | 'audio' | 'file';
 export type Profile = {
@@ -37,6 +41,8 @@ export type Message = {
   media?: Media;
   replyTo?: string;
   forwardedFrom?: string;
+  type?: 'normal' | 'poll' | 'announcement';
+  poll?: { question: string; options: PollOption[]; allowChange?: boolean };
   createdAt: number;
   editedAt?: number;
   deleted?: boolean;

@@ -119,6 +119,11 @@ async function createDirect(request: Request, env: Env, user: AuthUser) {
   const other = await dbRequest<{ uid: string } | null>(env, `users/${input.otherUid}`);
   if (!other || other.uid !== input.otherUid) return json({ error: 'User not found' }, 404);
   const chatId = `dm_${[user.uid, input.otherUid].sort().join('_')}`;
+  const existing = await dbRequest<unknown | null>(env, `chats/${chatId}`);
+  if (!existing) {
+    const privacy = await dbRequest<{ allowNewDMs?: boolean } | null>(env, `userSettings/${input.otherUid}/privacy`);
+    if (privacy?.allowNewDMs === false) return json({ error: 'Этот пользователь запретил новые личные сообщения.' }, 403);
+  }
   const token = await accessToken(env);
   const chat = { id: chatId, kind: 'dm', title: '', creatorId: user.uid, createdAt: Date.now(), updatedAt: Date.now() };
   const response = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/chats/${chatId}.json`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'If-Match': 'null_etag' }, body: JSON.stringify(chat) });
@@ -151,6 +156,31 @@ async function uploadMedia(request: Request, env: Env, user: AuthUser, url: URL)
   if (!response.ok) throw new Error(`Storage ${response.status}`);
   return json({ path });
 }
+async function forwardMedia(request: Request, env: Env, user: AuthUser) {
+  const input = await request.json().catch(() => ({})) as { sourceChatId?: string; sourceMessageId?: string; targetChatId?: string };
+  if (!safeId(input.sourceChatId) || !safeId(input.sourceMessageId) || !safeId(input.targetChatId)) return json({ error: 'Некорректный запрос на пересылку.' }, 400);
+  const [sourceRole, targetRole, targetChat, source] = await Promise.all([
+    memberRole(env, input.sourceChatId, user.uid), memberRole(env, input.targetChatId, user.uid),
+    dbRequest<{ kind: string } | null>(env, `chats/${input.targetChatId}`),
+    dbRequest<{ senderId: string; media?: { kind: string; name: string; url: string; size: number; mime: string } } | null>(env, `messages/${input.sourceChatId}/${input.sourceMessageId}`),
+  ]);
+  if (!sourceRole || !targetRole || !source?.media || !targetChat) return json({ error: 'Исходное вложение или доступ к чату недоступны.' }, 403);
+  if (targetChat.kind === 'channel' && targetRole !== 'owner' && targetRole !== 'admin') return json({ error: 'В канале публикуют только администраторы.' }, 403);
+  const sourcePath = source.media.url;
+  const match = /^chats\/([a-zA-Z0-9_-]{5,150})\/([a-zA-Z0-9_-]{5,150})\/([^/]{1,160})$/.exec(sourcePath);
+  if (!match || match[1] !== input.sourceChatId || match[2] !== source.senderId || source.media.size > 25 * 1024 * 1024) return json({ error: 'Исходное вложение недействительно.' }, 409);
+  if (await limited(env, request, `forward:${user.uid}`, 40, 3600)) return json({ error: 'Слишком много пересылок.' }, 429);
+  const token = await accessToken(env);
+  const sourceResponse = await fetch(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(env.FIREBASE_STORAGE_BUCKET)}/o/${encodeURIComponent(sourcePath)}?alt=media`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!sourceResponse.ok) return json({ error: 'Исходное вложение больше недоступно.' }, 404);
+  const bytes = await sourceResponse.arrayBuffer();
+  if (bytes.byteLength === 0 || bytes.byteLength > 25 * 1024 * 1024) return json({ error: 'Размер исходного файла недопустим.' }, 413);
+  const path = `chats/${input.targetChatId}/${user.uid}/${crypto.randomUUID()}_${safeStorageName(source.media.name)}`;
+  const uploadResponse = await fetch(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(env.FIREBASE_STORAGE_BUCKET)}/o?uploadType=media&name=${encodeURIComponent(path)}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': source.media.mime }, body: bytes });
+  if (!uploadResponse.ok) throw new Error(`Storage ${uploadResponse.status}`);
+  return json({ media: { ...source.media, url: path } });
+}
+function safeStorageName(name: string) { return name.replace(/[\\/\u0000-\u001f]/g, '_').slice(0, 120) || 'attachment'; }
 async function downloadMedia(env: Env, user: AuthUser, url: URL) {
   const path = url.searchParams.get('path');
   const match = /^chats\/([a-zA-Z0-9_-]{5,150})\/([a-zA-Z0-9_-]{5,150})\/([^/]{1,160})$/.exec(path || '');
@@ -177,10 +207,38 @@ async function deleteMedia(request: Request, env: Env, user: AuthUser) {
   if (!response.ok && response.status !== 404) return json({ error: `Не удалось удалить файл из Storage (HTTP ${response.status}).` }, 502);
   return json({ deleted: true });
 }
+async function deleteMessage(request: Request, env: Env, user: AuthUser) {
+  if (await limited(env, request, `delete:${user.uid}`, 60, 3600)) return json({ error: 'Слишком много удалений. Попробуйте позже.' }, 429);
+  const input = await request.json().catch(() => ({})) as { chatId?: string; messageId?: string };
+  if (!safeId(input.chatId) || !safeId(input.messageId)) return json({ error: 'Некорректное сообщение.' }, 400);
+  const [message, role] = await Promise.all([
+    dbRequest<{ id: string; senderId: string; text?: string; media?: { url: string }; createdAt: number } | null>(env, `messages/${input.chatId}/${input.messageId}`),
+    memberRole(env, input.chatId, user.uid),
+  ]);
+  if (!message || !role) return json({ error: 'Сообщение не найдено или у вас нет доступа.' }, 404);
+  if (message.senderId !== user.uid && role !== 'owner' && role !== 'moderator') return json({ error: 'Удалить сообщение у всех может только автор или модератор.' }, 403);
+  const token = await accessToken(env);
+  if (message.media?.url) {
+    const match = /^chats\/([a-zA-Z0-9_-]{5,150})\/([a-zA-Z0-9_-]{5,150})\/([^/]{1,160})$/.exec(message.media.url);
+    if (!match || match[1] !== input.chatId) return json({ error: 'Некорректный путь вложения.' }, 409);
+    const mediaResponse = await fetch(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(env.FIREBASE_STORAGE_BUCKET)}/o/${encodeURIComponent(message.media.url)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+    if (!mediaResponse.ok && mediaResponse.status !== 404) return json({ error: `Не удалось удалить вложение (HTTP ${mediaResponse.status}).` }, 502);
+  }
+  const latestResponse = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/messages/${input.chatId}.json?orderBy=%22createdAt%22&limitToLast=2`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!latestResponse.ok) throw new Error(`Database ${latestResponse.status}`);
+  const latest = await latestResponse.json() as Record<string, { id: string; senderId: string; text?: string; media?: { name: string }; createdAt: number }> | null;
+  const candidates = Object.values(latest || {}).filter(item => item.id !== input.messageId).sort((a, b) => b.createdAt - a.createdAt);
+  const replacement = candidates[0];
+  const updates: Record<string, unknown> = { [`messages/${input.chatId}/${input.messageId}`]: null, [`reactions/${input.chatId}/${input.messageId}`]: null };
+  updates[`chatActivity/${input.chatId}`] = replacement ? { updatedAt: replacement.createdAt, lastText: (replacement.text || (replacement.media ? `Вложение · ${replacement.media.name}` : '')).slice(0, 90), lastSenderId: replacement.senderId } : null;
+  const updateResponse = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/.json`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(updates) });
+  if (!updateResponse.ok) throw new Error(`Database ${updateResponse.status}`);
+  return json({ deleted: true });
+}
 async function pushMessage(request: Request, env: Env, user: AuthUser) {
   const input = await request.json().catch(() => ({})) as { chatId?: string; messageId?: string };
   if (!safeId(input.chatId) || !safeId(input.messageId)) return json({ error: 'Invalid message' }, 400);
-  const message = await dbRequest<{ senderId: string; text?: string; media?: { name: string } } | null>(env, `messages/${input.chatId}/${input.messageId}`);
+  const message = await dbRequest<{ senderId: string; text?: string; type?: string; media?: { name: string } } | null>(env, `messages/${input.chatId}/${input.messageId}`);
   if (!message || message.senderId !== user.uid || !(await memberRole(env, input.chatId, user.uid))) return json({ error: 'Forbidden' }, 403);
   const onceKey = `push:${input.chatId}:${input.messageId}`;
   if (await env.RATE_LIMIT.get(onceKey)) return json({ delivered: 0 });
@@ -199,9 +257,10 @@ async function pushMessage(request: Request, env: Env, user: AuthUser) {
       dbRequest<{ mutedUntil?: number } | null>(env, `userChatPrefs/${uid}/${input.chatId}`),
     ]);
     if (settings?.notifications?.enabled === false || (chatPrefs?.mutedUntil || 0) > Date.now()) continue;
-    const visibleBody = settings?.notifications?.preview === false ? 'Новое сообщение в Pride Messenger' : body;
+    const visibleBody = settings?.notifications?.preview === false ? (message.type === 'announcement' ? 'Новый Клич в Pride Messenger' : 'Новое сообщение в Pride Messenger') : body;
     for (const [deviceId, device] of Object.entries(devices || {}).slice(0, 10)) {
-      const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/messages:send`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ message: { token: device.token, data: { title: chat?.title ? `${title} · ${chat.title}` : title, body: visibleBody, url: `/pride/chat/${input.chatId}`, tag: `chat-${input.chatId}` }, webpush: { headers: { Urgency: 'high' } } } }) });
+      const pushTitle = message.type === 'announcement' ? `Клич · ${chat?.title || title}` : chat?.title ? `${title} · ${chat.title}` : title;
+      const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/messages:send`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ message: { token: device.token, data: { title: pushTitle, body: visibleBody, type: message.type || 'normal', url: `/pride/chat/${input.chatId}`, tag: `chat-${input.chatId}` }, webpush: { headers: { Urgency: 'high' } } } }) });
       if (response.ok) delivered++;
       else if (response.status === 404 || response.status === 400) {
         const failure = await response.clone().json().catch(() => ({})) as { error?: { details?: Array<{ errorCode?: string }>; message?: string } };
@@ -233,8 +292,10 @@ export default {
         else if (url.pathname === '/api/links/join-public' && request.method === 'POST') result = await joinPublic(request, env, user);
         else if (url.pathname === '/api/chats/direct' && request.method === 'POST') result = await createDirect(request, env, user);
         else if (url.pathname === '/api/media' && request.method === 'POST') result = await uploadMedia(request, env, user, url);
+        else if (url.pathname === '/api/media/forward' && request.method === 'POST') result = await forwardMedia(request, env, user);
         else if (url.pathname === '/api/media' && request.method === 'GET') result = await downloadMedia(env, user, url);
         else if (url.pathname === '/api/media/delete' && request.method === 'POST') result = await deleteMedia(request, env, user);
+        else if (url.pathname === '/api/messages/delete' && request.method === 'POST') result = await deleteMessage(request, env, user);
         else if (url.pathname === '/api/push/message' && request.method === 'POST') result = await pushMessage(request, env, user);
         else result = json({ error: 'Not found' }, 404);
       }

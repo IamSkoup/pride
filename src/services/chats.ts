@@ -1,7 +1,7 @@
 import { get, onDisconnect, push, ref, serverTimestamp, set, update } from 'firebase/database';
 import { getDownloadURL, ref as storageRef, uploadBytesResumable } from 'firebase/storage';
 import { requireDb, requireStorage, requireAuth } from './firebase';
-import type { Chat, ChatKind, Media, Message, Profile, Role } from '../types';
+import type { Chat, ChatKind, Media, Message, PollOption, Profile, Role } from '../types';
 
 const clean = (text: string, max: number) => text.trim().slice(0, max);
 const safeName = (name: string) => name.replace(/[\\/\u0000-\u001f]/g, '_').slice(0, 120);
@@ -59,18 +59,23 @@ export async function removeMember(chatId: string, actorId: string, targetId: st
   await set(ref(database, `userChats/${targetId}/${chatId}`), null);
   await set(ref(database, `chatMembers/${chatId}/${targetId}`), null);
 }
-export async function sendMessage(chatId: string, senderId: string, text: string, media?: Media, replyTo?: string, forwardedFrom?: string, id?: string) {
+export async function sendMessage(chatId: string, senderId: string, text: string, media?: Media, replyTo?: string, forwardedFrom?: string, id?: string, type: 'normal' | 'poll' | 'announcement' = 'normal', poll?: { question: string; options: PollOption[]; allowChange: boolean }) {
   const database = requireDb();
   const messageId = id || push(ref(database, `messages/${chatId}`)).key!;
   const value: Record<string, unknown> = { id: messageId, chatId, senderId, text: clean(text, 8000), createdAt: serverTimestamp() };
   if (media) value.media = media;
   if (replyTo) value.replyTo = replyTo;
   if (forwardedFrom) value.forwardedFrom = forwardedFrom;
+  if (type !== 'normal') value.type = type;
+  if (poll) value.poll = { question: clean(poll.question, 240), options: poll.options, allowChange: poll.allowChange };
   if (!value.text && !media) throw new Error('Напишите сообщение или добавьте файл.');
   await set(ref(database, `messages/${chatId}/${messageId}`), value);
   await set(ref(database, `chatActivity/${chatId}`), { updatedAt: serverTimestamp(), lastText: media ? `Вложение · ${media.name}` : String(value.text).slice(0, 90), lastSenderId: senderId });
   apiFetch('/api/push/message', { method: 'POST', body: JSON.stringify({ chatId, messageId }) }).catch(() => {});
   return messageId;
+}
+export async function voteInPoll(chatId: string, messageId: string, uid: string, optionId: string) {
+  await set(ref(requireDb(), `pollVotes/${chatId}/${messageId}/${uid}`), optionId);
 }
 export async function editMessage(chatId: string, messageId: string, text: string) {
   await update(ref(requireDb(), `messages/${chatId}/${messageId}`), { text: clean(text, 8000), editedAt: serverTimestamp() });
@@ -78,27 +83,28 @@ export async function editMessage(chatId: string, messageId: string, text: strin
 export async function deleteMessage(chatId: string, messageId: string, forEveryone: boolean, uid: string) {
   const database = requireDb();
   if (forEveryone) {
-    const message = (await get(ref(database, `messages/${chatId}/${messageId}`))).val() as Message | null;
-    if (message?.media?.url) {
-      const response = await apiFetch('/api/media/delete', { method: 'POST', body: JSON.stringify({ chatId, messageId, path: message.media.url }) });
-      if (!response.ok) throw new Error(await responseError(response, 'Не удалось удалить вложение из хранилища.'));
-    }
-    await update(ref(database, `messages/${chatId}/${messageId}`), { deleted: true, text: '', media: null });
+    const response = await apiFetch('/api/messages/delete', { method: 'POST', body: JSON.stringify({ chatId, messageId }) });
+    if (!response.ok) throw new Error(await responseError(response, 'Не удалось удалить сообщение у всех.'));
   }
   else await set(ref(database, `hiddenMessages/${uid}/${chatId}/${messageId}`), true);
 }
 export async function reactToMessage(chatId: string, messageId: string, uid: string, emoji: string | null) {
   await set(ref(requireDb(), `reactions/${chatId}/${messageId}/${uid}`), emoji);
 }
-export async function markRead(chatId: string, uid: string) { await set(ref(requireDb(), `readReceipts/${chatId}/${uid}`), serverTimestamp()); }
-export async function setTyping(chatId: string, uid: string, active: boolean) {
-  await set(ref(requireDb(), `typing/${chatId}/${uid}`), active ? serverTimestamp() : null);
+export async function markRead(chatId: string, uid: string) {
+  const database = requireDb();
+  const enabled = (await get(ref(database, `userSettings/${uid}/privacy/readReceipts`))).val() !== false;
+  await set(ref(database, `readReceipts/${chatId}/${uid}`), enabled ? serverTimestamp() : null);
+}
+export async function setTyping(chatId: string, uid: string, active: boolean, enabled = true) {
+  await set(ref(requireDb(), `typing/${chatId}/${uid}`), active && enabled ? serverTimestamp() : null);
 }
 export async function setPresence(uid: string) {
   const database = requireDb();
   const statusRef = ref(database, `presence/${uid}`);
-  await onDisconnect(statusRef).set({ online: false, lastSeen: serverTimestamp() });
-  await set(statusRef, { online: true, lastSeen: serverTimestamp() });
+  const visible = (await get(ref(database, `userSettings/${uid}/privacy/showPresence`))).val() !== false;
+  await onDisconnect(statusRef).set(visible ? { online: false, lastSeen: serverTimestamp() } : { online: false, lastSeen: 0 });
+  await set(statusRef, visible ? { online: true, lastSeen: serverTimestamp() } : { online: false, lastSeen: 0 });
 }
 export async function uploadAvatar(uid: string, file: File): Promise<string> {
   if (!file.type.startsWith('image/') || file.size > 5 * 1024 * 1024) throw new Error('Аватар: изображение до 5 МБ.');
@@ -125,6 +131,11 @@ export async function uploadChatMedia(chatId: string, uid: string, file: File, o
     xhr.send(file);
   });
   return { kind, name: safeName(file.name), url: path, size: file.size, mime: file.type || 'application/octet-stream' };
+}
+export async function forwardChatMedia(sourceChatId: string, sourceMessageId: string, targetChatId: string): Promise<Media> {
+  const response = await apiFetch('/api/media/forward', { method: 'POST', body: JSON.stringify({ sourceChatId, sourceMessageId, targetChatId }) });
+  if (!response.ok) throw new Error(await responseError(response, 'Не удалось безопасно переслать вложение.'));
+  return ((await response.json()) as { media: Media }).media;
 }
 export async function apiFetch(path: string, options: RequestInit = {}) {
   const base = import.meta.env.VITE_WORKER_URL;
