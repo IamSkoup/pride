@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, ArrowLeft, Bell, Check, CheckCheck, Circle, Copy, File, Info, Mic, MoreHorizontal, Paperclip, Pin, Search, Send, Smile, Square, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, Bell, Check, CheckCheck, Circle, Copy, File, Info, Mic, MoreHorizontal, Paperclip, Pin, Phone, Search, Send, Smile, Square, Video, X } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { onValue, orderByChild, query, limitToLast, push, ref, set, update } from 'firebase/database';
 import { useAuth } from '../../context/AuthContext';
 import { useFirebaseValue } from '../../hooks/useFirebaseValue';
 import { useToast } from '../../components/Toast';
 import { Avatar } from '../../components/Avatar';
+import { CallOverlay } from './CallOverlay';
 import { db, requireDb } from '../../services/firebase';
 import { addMember, changeRole, deleteMessage, editMessage, forwardChatMedia, markRead, mediaObjectUrl, messagePreview, reactToMessage, removeMember, sendMessage, setTyping, uploadChatMedia } from '../../services/chats';
 import { findUser } from '../../services/auth';
@@ -123,7 +124,7 @@ function MemberRow({ personId, role, owner, chatId, actorId }: { personId: strin
 }
 
 export function ChatPanel({ id }: { id: string }) {
-  const { user } = useAuth(); const navigate = useNavigate(); const { toast } = useToast();
+  const { user, profile } = useAuth(); const navigate = useNavigate(); const { toast } = useToast();
   const [settings] = useFirebaseValue<{ messages?: { enterToSend?: boolean; mediaPreviews?: boolean; autoplayVideos?: boolean; chatBackground?: string }; privacy?: { typingIndicator?: boolean } }>(user ? `userSettings/${user.uid}` : null);
   const [chatPrefs] = useFirebaseValue<{ background?: string }>(user ? `userChatPrefs/${user.uid}/${id}` : null);
   const [chat, loading] = useFirebaseValue<Chat>(`chats/${id}`);
@@ -139,6 +140,7 @@ export function ChatPanel({ id }: { id: string }) {
   const recorder = useRef<MediaRecorder | null>(null); const stream = useRef<MediaStream | null>(null); const discardRecording = useRef(false);
   const videoRecording = useRef(false); const recordingLimit = useRef<number | undefined>(undefined);
   const [showDetails, setShowDetails] = useState(false); const [showSearch, setShowSearch] = useState(false); const [search, setSearch] = useState('');
+  const [startCall, setStartCall] = useState<boolean | null>(null);
   const [count, setCount] = useState(80); const [pending, setPending] = useState<Message[]>([]);
   const messages = useMessages(id, count); const bottom = useRef<HTMLDivElement>(null); const fileInput = useRef<HTMLInputElement>(null); const composerInput = useRef<HTMLTextAreaElement>(null);
   const otherId = chat?.kind === 'dm' ? Object.keys(members || {}).find(key => key !== user?.uid) : null;
@@ -227,7 +229,7 @@ export function ChatPanel({ id }: { id: string }) {
   const title = chat.kind === 'dm' ? other?.displayName || 'Личный чат' : chat.title;
   const typingOthers = Object.entries(typing || {}).some(([uid, timestamp]) => uid !== user?.uid && Date.now() - timestamp < 6000);
   const background = chatPrefs?.background || settings?.messages?.chatBackground || 'plain';
-  return <div className="conversation" data-chat-background={background}><header className="conversation-head"><button className="icon-btn mobile-back" onClick={() => navigate('/chats')} aria-label="Назад"><ArrowLeft/></button><Avatar profile={other} name={title} size={42}/><div className="conversation-title"><strong>{title}</strong><span>{typingOthers ? 'печатает…' : chat.kind === 'dm' ? presence?.online ? 'в сети' : presence?.lastSeen ? `был(а) ${new Date(presence.lastSeen).toLocaleString('ru-RU')}` : `@${other?.username || ''}` : `${Object.keys(members).length} участн.`}</span></div><button className="icon-btn" onClick={() => setShowSearch(!showSearch)} title="Поиск по сообщениям"><Search size={20}/></button><button className="icon-btn" onClick={() => setShowDetails(!showDetails)} title="Информация"><Info size={20}/></button></header>
+  return <div className="conversation" data-chat-background={background}>{chat.kind === 'dm' && otherId && <CallOverlay chatId={id} uid={user!.uid} myName={profile?.displayName || 'Участник Pride'} otherId={otherId} otherName={other?.displayName || 'Контакт'} startVideo={startCall} onClose={() => setStartCall(null)}/>}<header className="conversation-head"><button className="icon-btn mobile-back" onClick={() => navigate('/chats')} aria-label="Назад"><ArrowLeft/></button><Avatar profile={other} name={title} size={42}/><div className="conversation-title"><strong>{title}</strong><span>{typingOthers ? 'печатает…' : chat.kind === 'dm' ? presence?.online ? 'в сети' : presence?.lastSeen ? `был(а) ${new Date(presence.lastSeen).toLocaleString('ru-RU')}` : `@${other?.username || ''}` : `${Object.keys(members).length} участн.`}</span></div>{chat.kind === 'dm' && <><button className="icon-btn" onClick={() => setStartCall(false)} title="Позвонить" aria-label="Позвонить"><Phone size={19}/></button><button className="icon-btn" onClick={() => setStartCall(true)} title="Видеозвонок" aria-label="Видеозвонок"><Video size={20}/></button></>}<button className="icon-btn" onClick={() => setShowSearch(!showSearch)} title="Поиск по сообщениям"><Search size={20}/></button><button className="icon-btn" onClick={() => setShowDetails(!showDetails)} title="Информация"><Info size={20}/></button></header>
     {chat.pinnedMessageId && <button className="pinned-banner" onClick={() => document.getElementById(`m-${chat.pinnedMessageId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><Pin size={16}/> Закреплено: {messagePreview(messages.find(m => m.id === chat.pinnedMessageId) || { text: 'Сообщение', id: '', chatId: id, senderId: '', createdAt: 0 })}</button>}
     {showSearch && <div className="chat-search"><Search size={17}/><input autoFocus placeholder="Поиск в этом чате" value={search} onChange={e => setSearch(e.target.value)}/><button className="icon-btn" onClick={() => { setShowSearch(false); setSearch(''); }}><X size={17}/></button></div>}
     <div className="message-scroll"><div className="message-stack">{messages.length >= count && <button className="load-older" onClick={() => setCount(count + 80)}>Загрузить более ранние</button>}{visible.length ? visible.map(message => <MessageItem key={message.id} message={message} own={message.senderId === user?.uid} chat={chat} uid={user!.uid} role={members[user!.uid]} messages={messages} mediaPreviews={settings?.messages?.mediaPreviews !== false} autoplayVideos={settings?.messages?.autoplayVideos === true} onReply={setReply} onForward={setForwarding} onEdit={m => { setEditing(m); setText(m.text); }} onRetry={retry}/>) : <div className="no-messages"><MessageBubbleIcon/><strong>{search ? 'Ничего не найдено' : 'Начните этот разговор'}</strong><span>{search ? 'Попробуйте другой запрос' : 'Первое сообщение иногда меняет всё.'}</span></div>}<div ref={bottom}/></div></div>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
-import { ArrowLeft, Bell, Camera, LogOut, Save, Settings, Shield, Sun, Trash2, UserRound } from 'lucide-react';
+import { ArrowLeft, Bell, Camera, LogOut, Save, Settings, Shield, Sun, Trash2, UserRound, Coins } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { deleteToken, getMessaging, isSupported } from 'firebase/messaging';
 import { get, ref, set, update } from 'firebase/database';
@@ -27,6 +27,7 @@ export function ProfilePage({ settings = false }: { settings?: boolean }) {
   const [activeSection, setActiveSection] = useState<SettingsSection | null>(settings ? null : 'profile');
   const [preferences] = useFirebaseValue<UserPreferences>(user ? `userSettings/${user.uid}` : null);
   const [devices] = useFirebaseValue<Record<string, Device>>(user ? `devices/${user.uid}` : null);
+  const [economy] = useFirebaseValue<{ equippedFrame?: string; frames?: Record<string, number> }>(user ? `economy/${user.uid}` : null);
   const fileInput = useRef<HTMLInputElement>(null);
   useEffect(() => { if (profile) { setName(profile.displayName); setUsername(profile.username); setBio(profile.bio || ''); setMood(profile.mood || 'На связи'); setRoar(profile.roarUntil && profile.roarUntil > Date.now() ? profile.roar || '' : ''); setMusicTitle(profile.musicTitle || ''); setMusicUrl(profile.musicUrl || ''); } }, [profile]);
   async function save() {
@@ -87,9 +88,9 @@ export function ProfilePage({ settings = false }: { settings?: boolean }) {
   const selectedSection = activeSection || 'profile';
   const isSection = (section: SettingsSection) => settings ? selectedSection === section : section === 'profile';
   return <div className="profile-page">
-    <header className="profile-top"><Link to="/chats" className="back-link"><ArrowLeft size={19}/> К чатам</Link><Link to={settings ? '/profile' : '/settings'} className="back-link"><Settings size={17}/>{settings ? 'Профиль' : 'Настройки'}</Link></header>
+    <header className="profile-top"><Link to="/chats" className="back-link"><ArrowLeft size={19}/> К чатам</Link><div className="profile-top-actions"><Link to="/shop" className="back-link"><Coins size={17}/> Claws и оформление</Link><Link to={settings ? '/profile' : '/settings'} className="back-link"><Settings size={17}/>{settings ? 'Профиль' : 'Настройки'}</Link></div></header>
     <div className={`profile-layout ${settings ? 'settings-layout' : ''}`} data-settings-index={!activeSection}>
-      {!settings && <aside className="profile-preview"><div className="profile-cover"><span className="profile-cover-sun"/></div><div className="profile-preview-body"><div className="profile-avatar-wrap"><Avatar profile={profile} size={86}/><button className="camera-btn" onClick={() => fileInput.current?.click()} aria-label="Изменить аватар"><Camera size={16}/></button><input ref={fileInput} type="file" accept="image/*" hidden onChange={avatar}/></div><h1>{profile.displayName}</h1><p className="handle">@{profile.username}</p>{profile.roar && profile.roarUntil && profile.roarUntil > Date.now() && <div className="roar">{profile.roar}</div>}<p className="bio-preview">{profile.bio || 'Расскажите о себе — это увидят ваши друзья.'}</p><div className="profile-mood"><span className="online-dot"/>{profile.mood || 'На связи'}</div>{profile.musicTitle && profile.musicUrl && <a className="profile-music" href={profile.musicUrl} target="_blank" rel="noreferrer"><span>♫</span><span><strong>{profile.musicTitle}</strong><small>Музыка профиля · открыть ссылку</small></span></a>}</div></aside>}
+      {!settings && <aside className="profile-preview"><div className="profile-cover"><span className="profile-cover-sun"/></div><div className="profile-preview-body"><div className={`profile-avatar-wrap ${economy?.equippedFrame && (economy.frames?.[economy.equippedFrame] || 0) > Date.now() ? `frame-${economy.equippedFrame}` : ''}`}><Avatar profile={profile} size={86}/><button className="camera-btn" onClick={() => fileInput.current?.click()} aria-label="Изменить аватар"><Camera size={16}/></button><input ref={fileInput} type="file" accept="image/*" hidden onChange={avatar}/></div><h1>{profile.displayName}</h1><p className="handle">@{profile.username}</p>{profile.roar && profile.roarUntil && profile.roarUntil > Date.now() && <div className="roar">{profile.roar}</div>}<p className="bio-preview">{profile.bio || 'Расскажите о себе — это увидят ваши друзья.'}</p><div className="profile-mood"><span className="online-dot"/>{profile.mood || 'На связи'}</div>{profile.musicTitle && profile.musicUrl && <a className="profile-music" href={profile.musicUrl} target="_blank" rel="noreferrer"><span>♫</span><span><strong>{profile.musicTitle}</strong><small>Музыка профиля · открыть ссылку</small></span></a>}</div></aside>}
       {settings && <nav className="settings-nav" aria-label="Разделы настроек">{SETTINGS_SECTIONS.map(section => <button key={section.id} className={selectedSection === section.id ? 'active' : ''} onClick={() => setActiveSection(section.id)}>{section.label}</button>)}</nav>}
       <main className="profile-content">
         <span className="eyebrow">ВАШЕ ПРОСТРАНСТВО</span><h2>{settings ? SETTINGS_SECTIONS.find(section => section.id === selectedSection)?.label : 'Мой профиль'}</h2>
