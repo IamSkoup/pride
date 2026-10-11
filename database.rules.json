@@ -299,7 +299,7 @@
             ".validate": false
           },
           "background": {
-            ".validate": "newData.val() === 'plain' || newData.val() === 'grass' || newData.val() === 'savanna' || newData.val() === 'evening' || newData.val() === 'stars' || newData.val() === 'cheetah' || newData.val() === 'leopard' || newData.val() === 'lion' || !newData.exists()"
+            ".validate": "newData.val() === 'plain' || newData.val() === 'grass' || newData.val() === 'savanna' || newData.val() === 'evening' || newData.val() === 'stars' || newData.val() === 'day' || newData.val() === 'night' || newData.val() === 'cheetah' || newData.val() === 'leopard' || newData.val() === 'lion' || !newData.exists()"
           }
         }
       }
