@@ -1,1 +1,0 @@
-import{j as s}from"./react-vendor-jctlxFn-.js";function n({profile:a,name:e,size:t=42}){const r=a?.displayName||e||"Pride";return s.jsx("span",{className:"avatar",style:{width:t,height:t,fontSize:t*.33},"aria-label":r,children:a?.avatar?s.jsx("img",{src:a.avatar,alt:""}):r.slice(0,2).toUpperCase()})}export{n as A};

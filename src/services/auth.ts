@@ -1,7 +1,7 @@
 import { createUserWithEmailAndPassword, deleteUser, sendPasswordResetEmail, signInWithEmailAndPassword, signOut, updateProfile } from 'firebase/auth';
 import { get, ref, runTransaction, set, update } from 'firebase/database';
 import { requireAuth, requireDb } from './firebase';
-import type { Profile } from '../types';
+import type { Profile, PublicProfile } from '../types';
 
 export const normalizeUsername = (value: string) => value.trim().replace(/^@/, '').toLowerCase();
 export const validUsername = (value: string) => /^[a-z0-9_]{3,24}$/.test(normalizeUsername(value));
@@ -34,6 +34,7 @@ export async function register(email: string, password: string, displayName: str
     await updateProfile(credentials.user, { displayName: profile.displayName });
     await update(ref(database), {
       [`users/${uid}`]: profile,
+      [`publicProfiles/${uid}`]: { uid, username, displayName: profile.displayName },
       [`userPrivate/${uid}/email`]: credentials.user.email,
       [`userSettings/${uid}/theme`]: 'night'
     });
@@ -81,15 +82,25 @@ export async function updateMyProfile(uid: string, before: Profile, changes: Par
     const claim = await runTransaction(ref(database, `usernames/${next.username}`), current => current === null ? { uid } : undefined, { applyLocally: false });
     if (!claim.committed) throw new Error('Этот username уже занят.');
     try {
-      const changes: Record<string, string | number | null> = { [`usernames/${before.username}`]: null };
-      for (const [field, value] of Object.entries(next)) if (value !== undefined) changes[`users/${uid}/${field}`] = value;
-      await update(ref(database), changes);
+      const writes: Record<string, string | number | null | PublicProfile> = { [`usernames/${before.username}`]: null };
+      for (const [field, value] of Object.entries(next)) if (value !== undefined) writes[`users/${uid}/${field}`] = value;
+      const merged = { ...before, ...next, username: next.username };
+      const publicProfile: PublicProfile = { uid, username: merged.username, displayName: merged.displayName };
+      if (merged.avatar) publicProfile.avatar = merged.avatar;
+      writes[`publicProfiles/${uid}`] = publicProfile;
+      await update(ref(database), writes);
     } catch (error) {
       await set(ref(database, `usernames/${next.username}`), null).catch(() => {});
       throw error;
     }
   } else {
-    await update(ref(database, `users/${uid}`), next);
+    const writes: Record<string, string | number | null | PublicProfile> = {};
+    for (const [field, value] of Object.entries(next)) if (value !== undefined) writes[`users/${uid}/${field}`] = value;
+    const merged = { ...before, ...next };
+    const publicProfile: PublicProfile = { uid, username: merged.username, displayName: merged.displayName };
+    if (merged.avatar) publicProfile.avatar = merged.avatar;
+    writes[`publicProfiles/${uid}`] = publicProfile;
+    await update(ref(database), writes);
   }
 }
 export async function findUser(usernameInput: string): Promise<Profile | null> {
