@@ -56,6 +56,7 @@ try {
   await assertFails(bob.ref('chatMembers/group_test/bob').set('admin'));
   const message = { id: 'msg_test', chatId: 'group_test', senderId: 'alice', text: 'Hello', createdAt: Date.now() };
   await assertSucceeds(alice.ref('messages/group_test/msg_test').set(message));
+  await assertFails(alice.ref('messages/group_test/forged_gift').set({ id: 'forged_gift', chatId: 'group_test', senderId: 'alice', text: 'Подарок', type: 'gift', createdAt: Date.now() }));
   await assertSucceeds(bob.ref('messages/group_test/msg_test').get());
   await assertFails(carol.ref('messages/group_test/msg_test').get());
   await assertSucceeds(alice.ref('chatMembers/group_test/bob').set('admin'));

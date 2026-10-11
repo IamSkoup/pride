@@ -304,7 +304,7 @@ async function pushMessage(request: Request, env: Env, user: AuthUser) {
   }
   return json({ delivered });
 }
-type Economy = { balance: number; subscription?: { tier: string; expiresAt: number }; frames?: Record<string, number>; equippedFrame?: string; dailyAt?: number; transfers?: Record<string, { to: string; amount: number; status: 'pending' | 'complete' }>; transfersIn?: Record<string, boolean>; ledger?: Array<{ id: string; kind: string; amount: number; label: string; at: number }> };
+type Economy = { balance: number; subscription?: { tier: string; expiresAt: number }; frames?: Record<string, number>; equippedFrame?: string; dailyAt?: number; giftsSent?: Record<string, { to: string; giftId: string }>; giftSales?: Record<string, boolean>; ledger?: Array<{ id: string; kind: string; amount: number; label: string; at: number }> };
 const PLANS: Record<string, { name: string; monthly: number; yearly: number }> = {
   cheetah: { name: 'Cheetah', monthly: 53, yearly: 530 },
   leopard: { name: 'Leopard', monthly: 99, yearly: 990 },
@@ -318,6 +318,12 @@ const FRAMES: Record<string, { name: string; price: number }> = {
   acacia: { name: 'Ветви акации', price: 110 },
   copper: { name: 'Медный ореол', price: 130 },
 };
+const SAVANNA_GIFTS: Record<string, { name: string; price: number }> = {
+  sunstone: { name: 'Солнечный камень', price: 12 },
+  acacia: { name: 'Венок акации', price: 35 },
+  horizon: { name: 'Золотой горизонт', price: 65 },
+  baobab: { name: 'Память баобаба', price: 110 },
+};
 async function updateEconomy(env: Env, uid: string, mutate: (state: Economy) => void) {
   for (let attempt = 0; attempt < 6; attempt++) {
     const token = await accessToken(env);
@@ -329,15 +335,23 @@ async function updateEconomy(env: Env, uid: string, mutate: (state: Economy) => 
     const write = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/economy/${uid}.json`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'If-Match': response.headers.get('ETag') || 'null_etag' }, body: JSON.stringify(value) });
     if (write.status === 412) continue;
     if (!write.ok) throw new Error(`Database ${write.status}`);
+    await writePublicStyle(env, uid, value).catch(() => {});
     return value;
   }
   throw new Error('Database transaction conflict');
+}
+async function writePublicStyle(env: Env, uid: string, economy: Economy) {
+  await dbRequest(env, `publicProfileStyles/${uid}`, 'PUT', {
+    subscription: economy.subscription || null,
+    equippedFrame: economy.equippedFrame || null,
+    frames: economy.frames || {},
+  });
 }
 async function economyRequest(request: Request, env: Env, user: AuthUser) {
   const uid = user.uid;
   if (request.method === 'GET') return json((await dbRequest<Economy | null>(env, `economy/${uid}`)) || { balance: 0, ledger: [] });
   if (await limited(env, request, `economy:${uid}`, 15, 60)) return json({ error: 'Слишком много операций. Попробуйте через минуту.' }, 429);
-  const input = await request.json().catch(() => ({})) as { action?: string; tier?: string; period?: string; frame?: string; equipped?: string; recipient?: string; amount?: number; transferId?: string };
+  const input = await request.json().catch(() => ({})) as { action?: string; tier?: string; period?: string; frame?: string; equipped?: string };
   const now = Date.now();
   for (let attempt = 0; attempt < 6; attempt++) {
     const token = await accessToken(env);
@@ -371,43 +385,75 @@ async function economyRequest(request: Request, env: Env, user: AuthUser) {
       if (frame && (!state.frames?.[frame] || state.frames[frame] <= now)) return json({ error: 'Срок этого оформления закончился.' }, 409);
       state.equippedFrame = frame || undefined;
       amount = 0; kind = 'style'; label = frame ? `Выбрано: ${FRAMES[frame]?.name || frame}` : 'Снята рамка';
-    } else if (input.action === 'gift') {
-      const recipientName = typeof input.recipient === 'string' ? input.recipient.replace(/^@/, '').toLowerCase() : '';
-      const giftAmount = Number(input.amount);
-      if (!safeUsername(recipientName) || !Number.isSafeInteger(giftAmount) || giftAmount < 1 || giftAmount > 5000 || !safeId(input.transferId)) return json({ error: 'Укажите @username и сумму от 1 до 5000 Claws.' }, 400);
-      const claim = await dbRequest<{ uid?: string } | null>(env, `usernames/${recipientName}`);
-      const recipientUid = claim?.uid;
-      if (!safeId(recipientUid) || recipientUid === uid) return json({ error: recipientUid === uid ? 'Нельзя отправить Claws самому себе.' : 'Пользователь не найден.' }, 404);
-      const transferKey = `${uid}_${input.transferId}`;
-      const prior = state.transfers?.[transferKey];
-      if (prior && (prior.to !== recipientUid || prior.amount !== giftAmount)) return json({ error: 'ID перевода уже использовался для другой операции.' }, 409);
-      if (prior?.status === 'complete') return json(state);
-      if (!prior) {
-        if (state.balance < giftAmount) return json({ error: 'Недостаточно Claws для подарка.' }, 402);
-        state.balance -= giftAmount;
-        state.transfers = { ...state.transfers, [transferKey]: { to: recipientUid, amount: giftAmount, status: 'pending' } };
-        amount = -giftAmount; kind = 'gift_sent'; label = `Подарок · @${recipientName}`;
-      }
-      if (amount) state.ledger.push({ id: crypto.randomUUID(), kind, amount, label, at: now });
-      const write = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/economy/${uid}.json`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'If-Match': etag || 'null_etag' }, body: JSON.stringify(state) });
-      if (write.status === 412) continue;
-      if (!write.ok) throw new Error(`Database ${write.status}`);
-      const updatedRecipient = await updateEconomy(env, recipientUid, value => {
-        if (value.transfersIn?.[transferKey]) return;
-        value.balance += giftAmount;
-        value.transfersIn = { ...value.transfersIn, [transferKey]: true };
-        value.ledger!.push({ id: crypto.randomUUID(), kind: 'gift_received', amount: giftAmount, label: 'Подарок от участника прайда', at: now });
-      });
-      const completed = await updateEconomy(env, uid, value => { if (value.transfers?.[transferKey]) value.transfers = { ...value.transfers, [transferKey]: { ...value.transfers[transferKey], status: 'complete' } }; });
-      return json({ ...completed, transfer: { id: transferKey, recipientBalance: updatedRecipient.balance } });
     } else return json({ error: 'Неизвестное действие.' }, 400);
     state.ledger.push({ id: crypto.randomUUID(), kind, amount, label, at: now });
     const write = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/economy/${uid}.json`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'If-Match': etag || 'null_etag' }, body: JSON.stringify(state) });
     if (write.status === 412) continue;
     if (!write.ok) throw new Error(`Database ${write.status}`);
+    await writePublicStyle(env, uid, state).catch(() => {});
     return json(state);
   }
   return json({ error: 'Баланс одновременно меняется. Повторите операцию.' }, 409);
+}
+async function giftRequest(request: Request, env: Env, user: AuthUser, action: string) {
+  if (await limited(env, request, `gifts:${user.uid}`, 18, 60)) return json({ error: 'Слишком часто. Попробуйте ещё раз через минуту.' }, 429);
+  const input = await request.json().catch(() => ({})) as { chatId?: string; giftId?: string; instanceId?: string };
+  if (action === 'send') {
+    if (!safeId(input.chatId) || !safeId(input.giftId) || !safeId(input.instanceId)) return json({ error: 'Некорректный подарок.' }, 400);
+    const chat = await dbRequest<{ id: string; kind: string; title: string } | null>(env, `chats/${input.chatId}`);
+    const members = await dbRequest<Record<string, string> | null>(env, `chatMembers/${input.chatId}`);
+    if (!chat || chat.kind !== 'dm' || !members?.[user.uid]) return json({ error: 'Подарки пока доступны в личных чатах.' }, 403);
+    const recipientId = Object.keys(members).find(uid => uid !== user.uid);
+    if (!recipientId || !safeId(recipientId)) return json({ error: 'Получатель не найден.' }, 404);
+    const product = SAVANNA_GIFTS[input.giftId];
+    if (!product) return json({ error: 'Неизвестный подарок.' }, 400);
+    let sent: Economy;
+    try {
+      sent = await updateEconomy(env, user.uid, state => {
+        const old = state.giftsSent?.[input.instanceId!];
+        if (old) { if (old.to !== recipientId || old.giftId !== input.giftId) throw new Error('ID подарка уже использован.'); return; }
+        if (state.balance < product.price) throw new Error('Недостаточно Claws для подарка.');
+        state.balance -= product.price;
+        state.giftsSent = { ...state.giftsSent, [input.instanceId!]: { to: recipientId, giftId: input.giftId! } };
+        state.ledger!.push({ id: input.instanceId!, kind: 'gift_sent', amount: -product.price, label: `Подарок · ${product.name}`, at: Date.now() });
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : '';
+      if (reason === 'Недостаточно Claws для подарка.') return json({ error: reason }, 402);
+      if (reason === 'ID подарка уже использован.') return json({ error: reason }, 409);
+      throw error;
+    }
+    const createdAt = Date.now();
+    const gift = { id: input.giftId, instanceId: input.instanceId, senderId: user.uid, recipientId, price: product.price, sentAt: createdAt };
+    await dbRequest(env, `receivedGifts/${recipientId}/${input.instanceId}`, 'PUT', { ...gift, visible: false, sold: false });
+    await dbRequest(env, `messages/${input.chatId}/${input.instanceId}`, 'PUT', { id: input.instanceId, chatId: input.chatId, senderId: user.uid, text: `Подарок: ${product.name}`, type: 'gift', gift, createdAt });
+    await dbRequest(env, `chatActivity/${input.chatId}`, 'PUT', { updatedAt: createdAt, lastText: `Подарок · ${product.name}`, lastSenderId: user.uid });
+    return json({ ok: true, balance: sent.balance });
+  }
+  if (!safeId(input.instanceId)) return json({ error: 'Подарок не найден.' }, 400);
+  const gift = await dbRequest<{ id: string; instanceId: string; price: number; visible?: boolean; sold?: boolean } | null>(env, `receivedGifts/${user.uid}/${input.instanceId}`);
+  if (!gift || gift.instanceId !== input.instanceId) return json({ error: 'Этот подарок не найден.' }, 404);
+  if (action === 'show') {
+    if (gift.sold) return json({ error: 'Проданный подарок нельзя разместить в профиле.' }, 409);
+    const visible = !gift.visible;
+    const changes: Record<string, unknown> = { [`receivedGifts/${user.uid}/${input.instanceId}/visible`]: visible };
+    changes[`publicGiftProfiles/${user.uid}/${input.instanceId}`] = visible ? { id: gift.id, instanceId: gift.instanceId, price: gift.price } : null;
+    await dbRequest(env, '', 'PATCH', changes);
+    return json({ ok: true, visible });
+  }
+  if (action === 'sell') {
+    if (gift.sold) return json({ error: 'Подарок уже продан.' }, 409);
+    const value = Math.floor(gift.price / 2);
+    await updateEconomy(env, user.uid, state => {
+      if (state.giftSales?.[input.instanceId!]) return;
+      state.giftSales = { ...state.giftSales, [input.instanceId!]: true };
+      state.balance += value;
+      state.ledger!.push({ id: input.instanceId!, kind: 'gift_sale', amount: value, label: 'Продажа подарка · 50%', at: Date.now() });
+    });
+    await dbRequest(env, `receivedGifts/${user.uid}/${input.instanceId}/sold`, 'PUT', true);
+    return json({ ok: true, claws: value });
+  }
+  return json({ error: 'Действие неизвестно.' }, 404);
 }
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -436,6 +482,7 @@ export default {
         else if (url.pathname === '/api/messages/delete' && request.method === 'POST') result = await deleteMessage(request, env, user);
         else if (url.pathname === '/api/push/message' && request.method === 'POST') result = await pushMessage(request, env, user);
         else if (url.pathname === '/api/economy' && (request.method === 'GET' || request.method === 'POST')) result = await economyRequest(request, env, user);
+        else if (url.pathname.startsWith('/api/gifts/') && request.method === 'POST') result = await giftRequest(request, env, user, url.pathname.split('/').pop() || '');
         else result = json({ error: 'Not found' }, 404);
       }
     } catch (error) {

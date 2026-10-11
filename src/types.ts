@@ -43,8 +43,9 @@ export type Message = {
   media?: Media;
   replyTo?: string;
   forwardedFrom?: string;
-  type?: 'normal' | 'poll' | 'announcement';
+  type?: 'normal' | 'poll' | 'announcement' | 'gift';
   poll?: { question: string; options: PollOption[]; allowChange?: boolean };
+  gift?: { id: string; instanceId: string; senderId: string; recipientId: string; price: number; sentAt: number };
   createdAt: number;
   editedAt?: number;
   deleted?: boolean;

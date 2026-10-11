@@ -21,3 +21,8 @@ export async function economyAction(action: string, values: Record<string, strin
   if (!response.ok) throw new Error(payload.error || 'Операция не выполнена.');
   return payload;
 }
+export async function giftAction(action: 'sell' | 'show', instanceId: string) {
+  const response = await apiFetch(`/api/gifts/${action}`, { method: 'POST', body: JSON.stringify({ instanceId }) });
+  const payload = await response.json() as { error?: string };
+  if (!response.ok) throw new Error(payload.error || 'Не удалось изменить подарок.');
+}
