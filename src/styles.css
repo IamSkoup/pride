@@ -119,3 +119,31 @@ label{display:block;font-size:12px;font-weight:700;color:var(--text)}label input
 @media(max-width:390px){.sidebar-searches{grid-template-columns:1fr}.sidebar-search{height:39px}.gift-picker-grid{grid-template-columns:1fr 1fr}.gift-option>strong{font-size:11px}.gift-option>span{font-size:9px}.mobile-nav a,.mobile-nav button{font-size:8px}}
 .directory-search button{display:grid;flex:0 0 auto;padding:4px;border:0;background:transparent;color:#d89a4b}.directory-search button:hover{color:#ffd17a}
 @media(max-width:900px){.sidebar-settings span{display:inline}.sidebar-bottom{padding-left:11px;padding-right:11px;gap:7px}.sidebar-profile{gap:7px}.sidebar-profile small{max-width:82px}}
+
+/* Keep the chat rail's controls inside their own space and let only the list scroll. */
+.app-shell{min-height:0}
+.sidebar{height:100%;min-height:0;overflow:hidden}
+.sidebar-top{flex:0 0 auto;min-width:0}
+.sidebar-searches{min-width:0;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+.sidebar-search{display:flex!important;min-width:0;width:100%;height:42px;gap:6px;padding:0 8px;overflow:hidden}
+.sidebar-search>svg{width:15px;height:15px;flex:0 0 15px}
+.sidebar-search input,.sidebar-searches label input:not([type=checkbox]){display:block;width:0;min-width:0;max-width:100%;height:auto;flex:1 1 0;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;font-size:10px;line-height:1.2;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
+.sidebar-search input::placeholder{opacity:1;color:#b69d82}
+.directory-search button{display:grid;flex:0 0 22px;width:22px;height:26px;margin:0;padding:3px}
+.filter-row{min-width:0;gap:3px;padding:10px 0 9px;overflow-x:auto;scrollbar-width:none}
+.filter-row::-webkit-scrollbar{display:none}
+.filter-row button{padding:7px 9px}
+.chat-list{flex:1 1 auto;min-height:0;overscroll-behavior:contain}
+.sidebar-bottom{flex:0 0 auto;min-width:0}
+.sidebar-profile span:not(.avatar){min-width:0;overflow:hidden}
+.sidebar-profile strong,.sidebar-profile small{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.welcome-panel{isolation:isolate;background:linear-gradient(90deg,#09080642,#0908061a 52%,#09080624),linear-gradient(0deg,#0908066e 0%,transparent 48%,#09080638 100%),url('./assets/savanna-sunset.webp') center center/cover no-repeat,#110e0b}
+.welcome-panel:before,.welcome-panel:after,.welcome-sun,.welcome-horizon{display:none}
+.welcome-content{max-width:650px;padding:28px 34px;text-shadow:0 2px 22px #050403d9}
+.welcome-content .eyebrow{color:#ffc15a}
+.welcome-content h2{font-size:clamp(34px,4.1vw,58px);text-wrap:balance}
+.welcome-content p{color:#f0d8b9}
+@media(max-width:420px){.sidebar-searches{grid-template-columns:minmax(0,1fr)}.sidebar-search{height:40px}.sidebar-search input,.sidebar-searches label input:not([type=checkbox]){font-size:12px}.directory-search button{flex-basis:27px;width:27px}}
+@media(max-width:760px){.sidebar{height:100%;min-height:0}.sidebar-top{padding-left:14px;padding-right:14px}.sidebar-searches{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.sidebar-search{height:44px}.sidebar-search input,.sidebar-searches label input:not([type=checkbox]){font-size:11px}.welcome-panel{background-position:center,center,60% center}.welcome-content{padding:22px 18px}.welcome-content h2{font-size:clamp(31px,8vw,43px)}}
+@media(max-width:360px){.sidebar-searches{grid-template-columns:minmax(0,1fr)}.sidebar-search{height:40px}.sidebar-search input,.sidebar-searches label input:not([type=checkbox]){font-size:12px}}
+@media(max-width:420px){.sidebar-searches{grid-template-columns:minmax(0,1fr)}}
