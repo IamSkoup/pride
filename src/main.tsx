@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './components/Toast';
 import { configured } from './services/firebase';
 import { AuthPage } from './pages/AuthPage';
+import { GlobalAudioPlayer } from './components/GlobalAudioPlayer';
 import './styles.css';
 
 const MessengerPage = lazy(() => import('./pages/MessengerPage').then(module => ({ default: module.MessengerPage })));
@@ -18,7 +19,7 @@ function Gate({ children }: { children: React.ReactNode }) { const { user, loadi
 function App() {
   if (!configured) return <div className="setup-screen"><span className="brand-mark">P</span><h1>Pride Messenger</h1><p>Чтобы запустить мессенджер, создайте файл <code>.env</code> по образцу <code>.env.example</code> и добавьте настройки Firebase. Затем перезапустите Vite.</p><code>cp .env.example .env</code></div>;
   const basename = import.meta.env.BASE_URL.replace(/\/$/, '') || '/';
-  return <BrowserRouter basename={basename}><ToastProvider><AuthProvider><OfflineBanner/><Suspense fallback={<div className="page-loading">Загрузка…</div>}><Routes><Route path="/" element={<AuthPage/>}/><Route path="/chats" element={<Gate><MessengerPage/></Gate>}/><Route path="/chat/:id" element={<Gate><MessengerPage/></Gate>}/><Route path="/invite/:inviteId/:inviteCode" element={<Gate><MessengerPage/></Gate>}/><Route path="/trail" element={<Gate><TrailPage/></Gate>}/><Route path="/shop" element={<Gate><ShopPage/></Gate>}/><Route path="/profile" element={<Gate><ProfilePage/></Gate>}/><Route path="/settings" element={<Gate><ProfilePage settings/></Gate>}/><Route path="*" element={<Navigate to="/chats" replace/>}/></Routes></Suspense></AuthProvider></ToastProvider></BrowserRouter>;
+  return <BrowserRouter basename={basename}><ToastProvider><AuthProvider><OfflineBanner/><GlobalAudioPlayer/><Suspense fallback={<div className="page-loading">Загрузка…</div>}><Routes><Route path="/" element={<AuthPage/>}/><Route path="/chats" element={<Gate><MessengerPage/></Gate>}/><Route path="/chat/:id" element={<Gate><MessengerPage/></Gate>}/><Route path="/invite/:inviteId/:inviteCode" element={<Gate><MessengerPage/></Gate>}/><Route path="/trail" element={<Gate><TrailPage/></Gate>}/><Route path="/shop" element={<Gate><ShopPage/></Gate>}/><Route path="/profile" element={<Gate><ProfilePage/></Gate>}/><Route path="/settings" element={<Gate><ProfilePage settings/></Gate>}/><Route path="*" element={<Navigate to="/chats" replace/>}/></Routes></Suspense></AuthProvider></ToastProvider></BrowserRouter>;
 }
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
 if ('serviceWorker' in navigator) window.addEventListener('load', () => {
