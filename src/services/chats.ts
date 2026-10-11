@@ -75,6 +75,12 @@ export async function sendMessage(chatId: string, senderId: string, text: string
   apiFetch('/api/push/message', { method: 'POST', body: JSON.stringify({ chatId, messageId }) }).catch(() => {});
   return messageId;
 }
+export async function sendSavannaGift(chatId: string, giftId: string, instanceId: string) {
+  const response = await apiFetch('/api/gifts/send', { method: 'POST', body: JSON.stringify({ chatId, giftId, instanceId }) });
+  const payload = await response.json() as { error?: string };
+  if (!response.ok) throw new Error(payload.error || 'Не удалось отправить подарок.');
+  apiFetch('/api/push/message', { method: 'POST', body: JSON.stringify({ chatId, messageId: instanceId }) }).catch(() => {});
+}
 export async function voteInPoll(chatId: string, messageId: string, uid: string, optionId: string) {
   await set(ref(requireDb(), `pollVotes/${chatId}/${messageId}/${uid}`), optionId);
 }
