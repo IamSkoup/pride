@@ -18,6 +18,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => auth ? onAuthStateChanged(auth, next => { setUser(next); setAuthLoading(false); }) : void setAuthLoading(false), []);
   useEffect(() => { if (user) setPresence(user.uid).catch(() => {}); }, [user?.uid]);
   useEffect(() => {
+    if (!user || !profile || !db) return;
+    const publicProfile: { uid: string; username: string; displayName: string; avatar?: string } = { uid: user.uid, username: profile.username, displayName: profile.displayName };
+    if (profile.avatar) publicProfile.avatar = profile.avatar;
+    set(ref(db, `publicProfiles/${user.uid}`), publicProfile).catch(error => console.warn('Could not publish searchable profile:', error.message));
+  }, [user?.uid, profile?.username, profile?.displayName, profile?.avatar]);
+  useEffect(() => {
     if (!user) { setThemeState('night'); return; }
     const uid = user.uid;
     setThemeState(cachedTheme(uid) || 'night');

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { applyTheme, cacheTheme, cachedTheme, normalizeTheme, persistThemeChoice } from '../src/services/theme.ts';
 import type { ThemeName } from '../src/types.ts';
 
-test('the savanna-at-dusk appearance persists and restores after reload', async () => {
+test('day, evening, and night savanna appearances persist and restore after reload', async () => {
   const values = new Map<string, string>();
   const storage = {
     getItem: (key: string) => values.get(key) ?? null,
@@ -14,31 +14,37 @@ test('the savanna-at-dusk appearance persists and restores after reload', async 
   const account = { theme: 'night' as ThemeName };
   const persist = async (_uid: string, theme: ThemeName) => { account.theme = theme; };
 
-  await persistThemeChoice('alice', 'night', root, storage, persist);
-  assert.equal(root.dataset.theme, 'night');
-  assert.equal(account.theme, 'night');
+  for (const theme of ['day', 'evening', 'night'] as const) {
+    await persistThemeChoice('alice', theme, root, storage, persist);
+    assert.equal(root.dataset.theme, theme);
+    assert.equal(account.theme, theme);
 
-  // A fresh app instance first uses the local cache, then applies the account snapshot.
-  const reloadedRoot = { dataset: {} as DOMStringMap } as HTMLElement;
-  const localAfterReload = cachedTheme('alice', storage);
-  assert.equal(localAfterReload, 'night');
-  applyTheme(localAfterReload || 'night', reloadedRoot);
-  assert.equal(reloadedRoot.dataset.theme, 'night');
-  applyTheme(normalizeTheme(account.theme), reloadedRoot);
-  assert.equal(reloadedRoot.dataset.theme, 'night');
+    // A fresh app instance first uses the local cache, then applies the account snapshot.
+    const reloadedRoot = { dataset: {} as DOMStringMap } as HTMLElement;
+    const localAfterReload = cachedTheme('alice', storage);
+    assert.equal(localAfterReload, theme);
+    applyTheme(localAfterReload || 'night', reloadedRoot);
+    assert.equal(reloadedRoot.dataset.theme, theme);
+    applyTheme(normalizeTheme(account.theme), reloadedRoot);
+    assert.equal(reloadedRoot.dataset.theme, theme);
+  }
 });
 
-test('all saved theme choices resolve to the single dusk appearance', () => {
-  for (const legacy of ['light', 'dark', 'sunset', 'day', 'evening', 'night']) assert.equal(normalizeTheme(legacy), 'night');
+test('legacy and invalid theme values fall back to night', () => {
+  for (const theme of ['day', 'evening', 'night']) assert.equal(normalizeTheme(theme), theme);
+  for (const legacy of ['light', 'dark', 'sunset', 'unknown']) assert.equal(normalizeTheme(legacy), 'night');
 });
 
-test('appearance settings have one fixed savanna palette', () => {
+test('appearance settings expose all three savanna choices', () => {
   const css = fs.readFileSync('src/styles.css', 'utf8');
+  const settings = fs.readFileSync('src/pages/ProfilePage.tsx', 'utf8');
   const rules = JSON.parse(fs.readFileSync('database.rules.json', 'utf8')) as { rules: { userSettings: { $uid: { theme: { '.validate': string } } } } };
   assert.ok(css.includes('--accent:#ffb267'));
   assert.ok(css.includes('.sunset-preview'));
-  assert.ok(!css.includes('Дневная саванна'));
-  assert.ok(rules.rules.userSettings.$uid.theme['.validate'].includes("'night'"));
+  assert.ok(settings.includes('Дневная саванна'));
+  assert.ok(settings.includes('Вечерняя саванна'));
+  assert.ok(settings.includes('Ночная саванна'));
+  assert.ok(rules.rules.userSettings.$uid.theme['.validate'].includes("'day'"));
   const palette = css.match(/:root\{([^}]+)\}/)?.[1] || '';
   const hues = [...palette.matchAll(/#([a-f\d]{6})/gi)].map(([, hex]) => {
     const [r, g, b] = hex.match(/../g)!.map(part => parseInt(part, 16) / 255);

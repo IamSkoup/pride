@@ -48,6 +48,18 @@
         }
       }
     },
+    "publicProfiles": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid",
+        ".validate": "newData.hasChildren(['uid','username','displayName']) && newData.child('uid').val() === $uid && newData.child('username').isString() && newData.child('username').val().matches(/^[a-z0-9_]{3,24}$/) && newData.child('displayName').isString() && newData.child('displayName').val().length > 0 && newData.child('displayName').val().length <= 48",
+        "uid": { ".validate": "newData.val() === $uid" },
+        "username": { ".validate": "newData.isString() && newData.val().matches(/^[a-z0-9_]{3,24}$/)" },
+        "displayName": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 48" },
+        "avatar": { ".validate": "newData.isString() && newData.val().beginsWith('https://')" },
+        "$other": { ".validate": false }
+      }
+    },
     "usernames": {
       "$username": {
         ".read": "auth != null",
@@ -78,7 +90,7 @@
         ".read": "auth != null && auth.uid === $uid",
         ".write": "auth != null && auth.uid === $uid",
         "theme": {
-          ".validate": "newData.val() === 'dark' || newData.val() === 'light' || newData.val() === 'day' || newData.val() === 'evening' || newData.val() === 'sunset' || newData.val() === 'night'"
+          ".validate": "newData.val() === 'day' || newData.val() === 'evening' || newData.val() === 'night'"
         },
         "notifications": {
           "enabled": {
@@ -102,7 +114,7 @@
             ".validate": "newData.isBoolean()"
           },
           "chatBackground": {
-            ".validate": "newData.val() === 'plain' || newData.val() === 'grass' || newData.val() === 'savanna' || newData.val() === 'evening' || newData.val() === 'stars'"
+            ".validate": "newData.val() === 'plain' || newData.val() === 'grass' || newData.val() === 'savanna' || newData.val() === 'evening' || newData.val() === 'stars' || newData.val() === 'day' || newData.val() === 'night'"
           },
           "$other": {
             ".validate": false

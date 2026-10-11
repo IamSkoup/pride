@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 
-const env = await initializeTestEnvironment({ projectId: 'demo-pride', database: { host: '127.0.0.1', port: 9000, rules: readFileSync('database.rules.json', 'utf8') } });
+const env = await initializeTestEnvironment({ projectId: 'demo-pride', database: { host: process.env.FIREBASE_DATABASE_EMULATOR_HOST || '127.0.0.1', port: Number(process.env.FIREBASE_DATABASE_EMULATOR_PORT || 9000), rules: readFileSync('database.rules.json', 'utf8') } });
 try {
   await env.clearDatabase();
   const alice = env.authenticatedContext('alice', { email: 'alice@example.com' }).database();
@@ -12,6 +12,12 @@ try {
   await assertFails(guest.ref('users/alice').get());
   await assertSucceeds(alice.ref('usernames/alice').set({ uid: 'alice' }));
   await assertFails(bob.ref('usernames/alice').set({ uid: 'bob' }));
+  await assertSucceeds(alice.ref('publicProfiles/alice').set({ uid: 'alice', username: 'alice', displayName: 'Alice' }));
+  await assertSucceeds(bob.ref('publicProfiles/alice').get());
+  await assertFails(bob.ref('publicProfiles/alice').set({ uid: 'alice', username: 'alice', displayName: 'Imposter' }));
+  await assertFails(alice.ref('publicProfiles/alice/email').set('alice@example.com'));
+  for (const theme of ['day', 'evening', 'night']) await assertSucceeds(alice.ref('userSettings/alice/theme').set(theme));
+  await assertFails(alice.ref('userSettings/alice/theme').set('sunset'));
   const profile = { uid: 'alice', username: 'alice', displayName: 'Alice', bio: '', createdAt: Date.now() };
   await assertSucceeds(alice.ref('users/alice').set(profile));
   await assertFails(bob.ref('users/alice/displayName').set('Hacked'));
@@ -23,8 +29,8 @@ try {
   await assertSucceeds(alice.ref().update({ 'users/alice/username': 'alice2', 'usernames/alice': null }));
   assert.equal((await alice.ref('usernames/alice').get()).exists(), false);
   await assertSucceeds(bob.ref('usernames/bob').set({ uid: 'bob' }));
-  await assertSucceeds(bob.ref().update({ 'users/bob': { uid: 'bob', username: 'bob', displayName: 'Bob', bio: '', createdAt: Date.now() }, 'userPrivate/bob/email': 'bob@example.com', 'userSettings/bob/theme': 'dark' }));
-  await assertSucceeds(alice.ref('userSettings/alice/theme').set('sunset'));
+  await assertSucceeds(bob.ref().update({ 'users/bob': { uid: 'bob', username: 'bob', displayName: 'Bob', bio: '', createdAt: Date.now() }, 'userPrivate/bob/email': 'bob@example.com', 'userSettings/bob/theme': 'night' }));
+  await assertFails(alice.ref('userSettings/alice/theme').set('sunset'));
   await assertSucceeds(alice.ref('userSettings/alice/theme').set('evening'));
   await assertFails(alice.ref('userSettings/alice/theme').set('ultraviolet'));
   await assertSucceeds(alice.ref('userChatPrefs/alice/group_test/background').set('savanna'));

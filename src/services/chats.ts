@@ -7,13 +7,13 @@ import { activeSubscriptionTier, maxUploadMegabytes } from './entitlements';
 const clean = (text: string, max: number) => text.trim().slice(0, max);
 const safeName = (name: string) => name.replace(/[\\/\u0000-\u001f]/g, '_').slice(0, 120);
 export function dmId(a: string, b: string) { return `dm_${[a, b].sort().join('_')}`; }
-export async function startDirectChat(me: string, other: Profile): Promise<string> {
+export async function startDirectChat(me: string, other: Pick<Profile, 'uid'>): Promise<string> {
   if (me === other.uid) throw new Error('Нельзя начать чат с собой.');
   const response = await apiFetch('/api/chats/direct', { method: 'POST', body: JSON.stringify({ otherUid: other.uid }) });
   if (!response.ok) throw new Error('Не удалось открыть личный чат.');
   return ((await response.json()) as { chatId: string }).chatId;
 }
-export async function createSpace(me: string, kind: Exclude<ChatKind, 'dm'>, title: string, description: string, isPublic: boolean, people: Profile[]): Promise<string> {
+export async function createSpace(me: string, kind: Exclude<ChatKind, 'dm'>, title: string, description: string, isPublic: boolean, people: Array<Pick<Profile, 'uid'>>): Promise<string> {
   const database = requireDb();
   const id = push(ref(database, 'chats')).key!;
   const inviteCode = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
