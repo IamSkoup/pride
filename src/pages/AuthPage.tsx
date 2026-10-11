@@ -3,11 +3,15 @@ import { ArrowRight, AtSign, Eye, EyeOff, Sun, ShieldCheck } from 'lucide-react'
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { explainAuthError, login, register, resetPassword, usernameAvailable, validUsername } from '../services/auth';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../components/Toast';
+import { registerPushDevice, requestPushPermission } from '../services/notifications';
+import { auth } from '../services/firebase';
 
 export function AuthPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const { user } = useAuth();
+  const { toast } = useToast();
   const [mode, setMode] = useState<'login' | 'register' | 'reset'>('login');
   const [email, setEmail] = useState('');
   const [identifier, setIdentifier] = useState('');
@@ -28,9 +32,21 @@ export function AuthPage() {
   }, [mode, username]);
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setMessage('');
+    // Request permission from the submit gesture, before network sign-in can consume it.
+    const permission = mode === 'reset' ? null : requestPushPermission().catch(() => 'unsupported' as const);
     try {
-      if (mode === 'login') await login(identifier, password);
-      if (mode === 'register') await register(email, password, name, username);
+      if (mode === 'login') {
+        await login(identifier, password);
+        const granted = await permission;
+        if (granted === 'granted') { try { if (auth?.currentUser) await registerPushDevice(auth.currentUser.uid); toast('Уведомления включены на этом устройстве'); } catch (error) { toast((error as Error).message, 'error'); } }
+        else if (granted === 'denied') toast('Уведомления отключены в браузере. Их можно включить в настройках.', 'error');
+      }
+      if (mode === 'register') {
+        const profile = await register(email, password, name, username);
+        const granted = await permission;
+        if (granted === 'granted') { try { await registerPushDevice(profile.uid); toast('Уведомления включены на этом устройстве'); } catch (error) { toast((error as Error).message, 'error'); } }
+        else if (granted === 'denied') toast('Уведомления отключены в браузере. Их можно включить в настройках.', 'error');
+      }
       if (mode === 'reset') { await resetPassword(email); setMessage('Письмо отправлено. Проверьте входящие и папку «Спам».'); }
     } catch (error) { setMessage(explainAuthError(error)); }
     finally { setBusy(false); }

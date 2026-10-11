@@ -112,7 +112,7 @@ export async function uploadAvatar(uid: string, file: File): Promise<string> {
   await uploadBytesResumable(fileRef, file, { contentType: file.type });
   return getDownloadURL(fileRef);
 }
-export async function uploadChatMedia(chatId: string, uid: string, file: File, onProgress?: (progress: number) => void): Promise<Media> {
+export async function uploadChatMedia(chatId: string, uid: string, file: File, onProgress?: (progress: number) => void, videoNote = false): Promise<Media> {
   if (file.size > 25 * 1024 * 1024) throw new Error('Файл не должен превышать 25 МБ.');
   const kind = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'file';
   if (!uid) throw new Error('Войдите снова.');
@@ -130,7 +130,7 @@ export async function uploadChatMedia(chatId: string, uid: string, file: File, o
     xhr.onload = () => { if (xhr.status >= 200 && xhr.status < 300) resolve((JSON.parse(xhr.responseText) as { path: string }).path); else { let reason = 'Не удалось загрузить файл.'; try { reason = JSON.parse(xhr.responseText).error || reason; } catch {} reject(new Error(reason)); } };
     xhr.send(file);
   });
-  return { kind, name: safeName(file.name), url: path, size: file.size, mime: file.type || 'application/octet-stream' };
+  return { kind: videoNote ? 'videoNote' : kind, name: safeName(file.name), url: path, size: file.size, mime: file.type || 'application/octet-stream' };
 }
 export async function forwardChatMedia(sourceChatId: string, sourceMessageId: string, targetChatId: string): Promise<Media> {
   const response = await apiFetch('/api/media/forward', { method: 'POST', body: JSON.stringify({ sourceChatId, sourceMessageId, targetChatId }) });

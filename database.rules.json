@@ -34,6 +34,12 @@
         "roarUntil": {
           ".validate": "newData.isNumber()"
         },
+        "musicTitle": {
+          ".validate": "newData.isString() && newData.val().length <= 60"
+        },
+        "musicUrl": {
+          ".validate": "newData.isString() && newData.val().length <= 240 && (newData.val() === '' || newData.val().beginsWith('https://'))"
+        },
         "createdAt": {
           ".validate": "newData.isNumber()"
         },
