@@ -183,3 +183,174 @@ label{display:block;font-size:12px;font-weight:700;color:var(--text)}label input
 @media(max-width:760px){.auth-art{background-position:center,center,43% center}.auth-art-content{padding:18px 20px}.profile-avatar-editor{align-items:center}.profile-avatar-editor .profile-avatar-wrap{margin-top:0}.settings-card{padding:17px}.theme-choices{grid-template-columns:1fr}.theme-choices .theme-card{min-height:100px}.trail-conversation{height:100%;min-height:0}.trail-chat-list{padding:18px 12px}.trail-chat-list .trail-row{width:94%}.create-space-modal{max-height:calc(100dvh - 24px);overflow:auto}.contact-list{max-height:210px}.purchase-actions{align-items:stretch;flex-direction:column-reverse}.purchase-actions button{width:100%;min-height:42px}.sidebar{background:linear-gradient(180deg,#100d0be8,#100d0bdc 42%,#100d0bed),var(--mobile-savanna-image) center 35%/cover no-repeat,var(--surface)}.chat-list{background:linear-gradient(180deg,#0e0b09bb,#0e0b0977)}.chat-row{background:#211a17d9}.chat-row:hover,.chat-row.selected{background:#49301fef}.sidebar-top{background:#120f0dcc;padding-bottom:7px}.sidebar-bottom{background:#120f0dee}}
 @media(max-width:520px){.two-col{grid-template-columns:1fr}.profile-avatar-editor{gap:10px}.profile-avatar-editor .secondary-btn{font-size:11px;padding:9px 11px}.profile-content h2{font-size:26px}.claw-purchase-modal .modal-head h2{font-size:20px}}
 @media(prefers-reduced-motion:reduce){.theme-choices .theme-card{transition:none}}
+
+/* The daytime scene needs a complete light palette, including the app's
+   long-lived dark components and mobile overrides. */
+:root[data-theme="day"]{
+  color-scheme:light;
+  --bg:#e6d3ad;--surface:#f6ebd1;--surface2:#edddb9;--surface3:#dfc69b;
+  --line:#c5a875;--text:#392a19;--muted:#735d3e;--accent:#a74d12;
+  --accent2:#c8621d;--own:#dfbf84;--danger:#9e4035;
+  --savanna-image:url('./assets/savanna-day.webp');
+  color:var(--text);background-color:var(--bg)
+}
+:root[data-theme="evening"]{
+  color-scheme:dark;
+  --bg:#241913;--surface:#33231c;--surface2:#422b20;--surface3:#593823;
+  --line:#754b30;--text:#fff0d8;--muted:#d0ad87;--accent:#ffb752;
+  --accent2:#f17a35;--own:#68401f;--danger:#ff9b87;
+  --savanna-image:url('./assets/savanna-sunset.webp');
+  color:var(--text);background-color:var(--bg)
+}
+:root[data-theme="night"]{color-scheme:dark}
+
+:root[data-theme="day"] body,
+:root[data-theme="day"] .app-shell{color:var(--text);background-color:var(--bg)}
+:root[data-theme="day"] .app-shell{
+  background-image:linear-gradient(110deg,#f0dfbd38,#f0dfbd18),var(--savanna-image);
+  background-position:center;background-size:cover;background-attachment:fixed
+}
+:root[data-theme="day"] .sidebar,
+:root[data-theme="day"] .mobile-nav,
+:root[data-theme="day"] .sidebar-top,
+:root[data-theme="day"] .sidebar-bottom{background:rgba(247,236,212,.95);color:var(--text)}
+:root[data-theme="day"] .sidebar{border-color:var(--line)}
+:root[data-theme="day"] .sidebar-search,
+:root[data-theme="day"] .chat-row,
+:root[data-theme="day"] .composer,
+:root[data-theme="day"] .composer-context,
+:root[data-theme="day"] .contact-option{background:var(--surface2);border-color:var(--line);color:var(--text)}
+:root[data-theme="day"] .chat-list{background:rgba(243,229,198,.62)}
+:root[data-theme="day"] .chat-row:hover{background:#e6d1a8}
+:root[data-theme="day"] .chat-row.selected{background:linear-gradient(100deg,#e8cd99,#f5e8cc);box-shadow:inset 3px 0 var(--accent)}
+:root[data-theme="day"] .filter-row{border-color:var(--line)}
+:root[data-theme="day"] .filter-row button.active,
+:root[data-theme="day"] .settings-nav button.active{background:var(--surface3);color:#6f350f}
+:root[data-theme="day"] .profile-page,
+:root[data-theme="day"] .trail-page,
+:root[data-theme="day"] .shop-page{
+  background:linear-gradient(180deg,#f1e3c9b8,#eee0c4a6 56%,#e6d3adcc),var(--savanna-image) center top/cover fixed,var(--bg)
+}
+:root[data-theme="day"] .profile-top{background:#f4e7ccdc;border-color:var(--line)}
+:root[data-theme="day"] .settings-card,
+:root[data-theme="day"] .profile-preview,
+:root[data-theme="day"] .settings-nav,
+:root[data-theme="day"] .details-panel,
+:root[data-theme="day"] .modal,
+:root[data-theme="day"] .wallet-card,
+:root[data-theme="day"] .daily-reward,
+:root[data-theme="day"] .ledger,
+:root[data-theme="day"] .frame-card,
+:root[data-theme="day"] .plan-card{
+  color:var(--text);background:rgba(248,238,216,.96);border-color:var(--line);
+  box-shadow:0 12px 34px #53381920;backdrop-filter:blur(12px)
+}
+:root[data-theme="day"] .plan-card:before,
+:root[data-theme="day"] .plan-card:after{opacity:.25}
+:root[data-theme="day"] .profile-cover{background:linear-gradient(0deg,#5135153a,transparent 75%),var(--savanna-image) 50% 40%/cover no-repeat}
+:root[data-theme="day"] .profile-avatar-wrap .avatar{border-color:var(--surface)}
+:root[data-theme="day"] .profile-content h2,
+:root[data-theme="day"] .settings-card h3,
+:root[data-theme="day"] .section-heading h3,
+:root[data-theme="day"] .plan-card h3,
+:root[data-theme="day"] .ledger h2{color:var(--text)}
+:root[data-theme="day"] .settings-card label,
+:root[data-theme="day"] .profile-content label{color:var(--text)}
+:root[data-theme="day"] input:not([type=checkbox]),
+:root[data-theme="day"] textarea,
+:root[data-theme="day"] select,
+:root[data-theme="day"] .sidebar-search input,
+:root[data-theme="day"] .search-line input{
+  color:var(--text);background-color:#fff7e7;border-color:#c5a875
+}
+:root[data-theme="day"] input::placeholder,
+:root[data-theme="day"] textarea::placeholder{color:#80694c}
+:root[data-theme="day"] .primary-btn,
+:root[data-theme="day"] .create-btn,
+:root[data-theme="day"] .send-btn,
+:root[data-theme="day"] .mobile-nav .mobile-plus{
+  color:#38220e;background:linear-gradient(135deg,#ffd06d,#eda03b);box-shadow:0 5px 14px #89501420
+}
+:root[data-theme="day"] .secondary-btn{color:#49341f;background:#ead8b4;border-color:#c5a875}
+:root[data-theme="day"] .secondary-btn:hover{color:#36220f;background:#e2c99a}
+:root[data-theme="day"] .icon-btn{color:#70583b}
+:root[data-theme="day"] .icon-btn:hover{color:#382719;background:#e7d5b2}
+:root[data-theme="day"] .eyebrow{color:#98440e}
+:root[data-theme="day"] .subtle,
+:root[data-theme="day"] .muted{color:#6f5a3d}
+:root[data-theme="day"] .conversation{isolation:isolate;background:var(--bg);color:var(--text)}
+:root[data-theme="day"] .conversation-head,
+:root[data-theme="day"] .details-panel{background:rgba(247,236,212,.97);color:var(--text);border-color:var(--line)}
+:root[data-theme="day"] .message-scroll{z-index:1;background:transparent}
+:root[data-theme="day"] .conversation:before{z-index:0}
+:root[data-theme="day"] .conversation[data-chat-background="plain"]:before{display:none}
+:root[data-theme="day"] .conversation[data-chat-background="day"]:before{
+  background-image:linear-gradient(0deg,#f6e6c9a1,#fff5dba6),url('./assets/savanna-day.webp');
+  background-position:center;background-size:cover;opacity:1
+}
+:root[data-theme="day"] .conversation[data-chat-background="savanna"]:before,
+:root[data-theme="day"] .conversation[data-chat-background="evening"]:before,
+:root[data-theme="day"] .conversation[data-chat-background="grass"]:before{
+  background-image:linear-gradient(0deg,#f6e6c99c,#fff5db9c),url('./assets/savanna-sunset.webp');
+  background-position:center;background-size:cover;opacity:1
+}
+:root[data-theme="day"] .conversation[data-chat-background="night"]:before,
+:root[data-theme="day"] .conversation[data-chat-background="stars"]:before{
+  background-image:linear-gradient(0deg,#f3e4c0a3,#f9edda99),url('./assets/savanna-night.webp');
+  background-position:center;background-size:cover;opacity:1
+}
+:root[data-theme="day"] .conversation[data-chat-background="cheetah"]:before,
+:root[data-theme="day"] .conversation[data-chat-background="leopard"]:before,
+:root[data-theme="day"] .conversation[data-chat-background="lion"]:before{opacity:.28}
+:root[data-theme="day"] .bubble{color:var(--text);background:#fff4dcf2;border-color:#d0b582;box-shadow:0 4px 18px #4c351614}
+:root[data-theme="day"] .own .bubble{color:#382514;background:#e8c98f;border-color:#c39b5d}
+:root[data-theme="day"] .conversation-title span,
+:root[data-theme="day"] .sender-name,
+:root[data-theme="day"] .forwarded,
+:root[data-theme="day"] .message-meta{color:#76562c}
+:root[data-theme="day"] .composer-wrap{background:linear-gradient(0deg,#f6ebd3,#f6ebd3f0);border-color:var(--line)}
+:root[data-theme="day"] .composer{background:#fff4df;border-color:#c9ac78}
+:root[data-theme="day"] .composer textarea{color:#382719}
+:root[data-theme="day"] .composer textarea::placeholder{color:#80694c}
+:root[data-theme="day"] .trail-chat-list .trail-row,
+:root[data-theme="day"] .trail-chat-list .trail-row:nth-child(even){background:#fff2d9ed;border-color:#c5a875;color:var(--text)}
+:root[data-theme="day"] .trail-chat-list .trail-open strong,
+:root[data-theme="day"] .trail-chat-list .trail-open span{color:var(--text)}
+:root[data-theme="day"] .trail-chat-list .trail-open small{color:var(--muted)}
+:root[data-theme="day"] .transfer-instruction{background:#f0dfbd;border-color:#c5a875}
+:root[data-theme="day"] .directory-results,
+:root[data-theme="day"] .found-user,
+:root[data-theme="day"] .space-row,
+:root[data-theme="day"] .role-card{color:var(--text)}
+:root[data-theme="day"] .toast{color:#21432b}
+:root[data-theme="day"] .toast.error{color:#5c201a}
+:root[data-theme="day"] .auth-form-side{background:rgba(246,235,211,.92)}
+:root[data-theme="day"] .theme-choices .theme-card{color:#fff4df}
+
+:root[data-theme="evening"] .settings-card,
+:root[data-theme="evening"] .profile-preview,
+:root[data-theme="evening"] .settings-nav,
+:root[data-theme="evening"] .details-panel,
+:root[data-theme="evening"] .modal,
+:root[data-theme="evening"] .wallet-card,
+:root[data-theme="evening"] .daily-reward,
+:root[data-theme="evening"] .ledger,
+:root[data-theme="evening"] .frame-card,
+:root[data-theme="evening"] .plan-card{background:rgba(48,33,26,.94);color:var(--text);border-color:var(--line)}
+:root[data-theme="evening"] .composer-wrap{background:linear-gradient(0deg,#2b1d17,#2b1d17ed);border-color:var(--line)}
+:root[data-theme="evening"] .composer{background:#3b281f;border-color:var(--line)}
+:root[data-theme="evening"] .conversation-head{background:rgba(48,33,26,.96)}
+:root .conversation{isolation:isolate}
+:root .conversation:before{z-index:0}
+:root .message-scroll{z-index:1;background:transparent}
+:root .conversation[data-chat-background="plain"]:before{display:none}
+
+@media(max-width:760px){
+  :root[data-theme="day"] .sidebar{background:linear-gradient(180deg,#f7ebd9eF,#f5e8d1eF 42%,#f7ebd9f2),var(--mobile-savanna-image) center 35%/cover no-repeat,var(--surface)}
+  :root[data-theme="day"] .chat-list{background:rgba(248,238,216,.48)}
+  :root[data-theme="day"] .chat-row{background:#f5e7cbeb}
+  :root[data-theme="day"] .chat-row:hover,
+  :root[data-theme="day"] .chat-row.selected{background:#ead5aaf2}
+  :root[data-theme="day"] .sidebar-top,
+  :root[data-theme="day"] .sidebar-bottom{background:#f7ebd9f2}
+}

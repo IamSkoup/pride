@@ -34,6 +34,8 @@ try {
   await assertSucceeds(alice.ref('userSettings/alice/theme').set('evening'));
   await assertFails(alice.ref('userSettings/alice/theme').set('ultraviolet'));
   await assertSucceeds(alice.ref('userChatPrefs/alice/group_test/background').set('savanna'));
+  await assertSucceeds(alice.ref('userChatPrefs/alice/group_test/background').set('day'));
+  await assertSucceeds(alice.ref('userChatPrefs/alice/group_test/background').set('night'));
   await assertSucceeds(alice.ref('userChatPrefs/alice/group_test/background').set('cheetah'));
   await assertSucceeds(alice.ref('userChatPrefs/alice/group_test/background').set('lion'));
   await assertFails(alice.ref('userChatPrefs/alice/group_test/background').set('ultraviolet'));

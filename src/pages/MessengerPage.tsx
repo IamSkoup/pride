@@ -43,32 +43,47 @@ function SearchDialog({ onClose, query, onQueryChange }: { onClose: () => void; 
   const [joining, setJoining] = useState<string | null>(null);
   useEffect(() => {
     const term = query.trim().replace(/^@/, '').toLocaleLowerCase('ru');
-    if (term.length < 2) { setPeople([]); setSpaces([]); setBusy(false); return; }
     let active = true;
+    if (term.length < 2) {
+      setPeople([]); setSpaces([]); setSearchError(''); setBusy(false);
+      return () => { active = false; };
+    }
+    setPeople([]); setSpaces([]); setSearchError(''); setBusy(true);
+    let timeout: number | undefined;
+    let expired = false;
     const timer = window.setTimeout(async () => {
-      setBusy(true);
-      setSearchError('');
       try {
-        const [peopleSnapshot, spacesSnapshot] = await Promise.all([
-          get(ref(requireDb(), 'publicProfiles')),
-          get(ref(requireDb(), 'publicSpaces')),
-        ]);
-        if (!active) return;
-        const matches = (Object.values(peopleSnapshot.val() || {}) as PublicProfile[])
-          .filter(person => person.uid !== user?.uid && `${person.displayName} ${person.username}`.toLocaleLowerCase('ru').includes(term))
-          .slice(0, 30);
-        if (!matches.some(person => person.username === term) && /^[a-z0-9_]{3,24}$/.test(term)) {
-          const exactMatch = await findUser(term);
-          if (exactMatch && exactMatch.uid !== user?.uid) matches.unshift(exactMatch);
-        }
-        const publicMatches = (Object.values(spacesSnapshot.val() || {}) as Array<{ id: string; title: string; kind: 'group' | 'channel'; description?: string }>)
-          .filter(space => `${space.title} ${space.description || ''}`.toLocaleLowerCase('ru').includes(term))
-          .slice(0, 30);
-        setPeople(matches); setSpaces(publicMatches);
-      } catch (error) { if (active) { setSearchError((error as Error).message); toast((error as Error).message, 'error'); } }
-      finally { if (active) setBusy(false); }
+        const search = async () => {
+          const [peopleSnapshot, spacesSnapshot] = await Promise.all([
+            get(ref(requireDb(), 'publicProfiles')),
+            get(ref(requireDb(), 'publicSpaces')),
+          ]);
+          if (!active) return;
+          const matches = (Object.values(peopleSnapshot.val() || {}) as PublicProfile[])
+            .filter(person => person.uid !== user?.uid && `${person.displayName} ${person.username}`.toLocaleLowerCase('ru').includes(term))
+            .slice(0, 30);
+          if (!matches.some(person => person.username === term) && /^[a-z0-9_]{3,24}$/.test(term)) {
+            const exactMatch = await findUser(term);
+            if (!active || expired) return;
+            if (exactMatch && exactMatch.uid !== user?.uid) matches.unshift(exactMatch);
+          }
+          if (!active || expired) return;
+          const publicMatches = (Object.values(spacesSnapshot.val() || {}) as Array<{ id: string; title: string; kind: 'group' | 'channel'; description?: string }>)
+            .filter(space => `${space.title} ${space.description || ''}`.toLocaleLowerCase('ru').includes(term))
+            .slice(0, 30);
+          setPeople(matches); setSpaces(publicMatches);
+        };
+        const deadline = new Promise<never>((_, reject) => {
+          timeout = window.setTimeout(() => {
+            expired = true;
+            reject(new Error('Поиск не ответил за 12 секунд. Проверьте подключение и повторите попытку.'));
+          }, 12_000);
+        });
+        await Promise.race([search(), deadline]);
+      } catch (error) { if (active) setSearchError((error as Error).message || 'Не удалось загрузить результаты.'); }
+      finally { if (timeout) window.clearTimeout(timeout); if (active) setBusy(false); }
     }, 220);
-    return () => { active = false; window.clearTimeout(timer); };
+    return () => { active = false; window.clearTimeout(timer); if (timeout) window.clearTimeout(timeout); };
   }, [query, user?.uid, toast]);
   async function start(person: PublicProfile) {
     if (!user) return;
