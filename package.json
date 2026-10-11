@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test:rules": "node tests/rules.mjs",
     "test:theme": "node --experimental-strip-types --test tests/theme.test.ts",
+    "test:entitlements": "node --experimental-strip-types --test tests/entitlements.test.ts",
     "icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {

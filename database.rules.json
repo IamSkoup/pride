@@ -38,7 +38,7 @@
           ".validate": "newData.isString() && newData.val().length <= 60"
         },
         "musicUrl": {
-          ".validate": "newData.isString() && newData.val().length <= 240 && (newData.val() === '' || newData.val().beginsWith('https://'))"
+          ".validate": "newData.isString() && newData.val().length <= 1024 && (newData.val() === '' || newData.val().beginsWith('https://'))"
         },
         "createdAt": {
           ".validate": "newData.isNumber()"
@@ -287,7 +287,7 @@
             ".validate": false
           },
           "background": {
-            ".validate": "newData.val() === 'plain' || newData.val() === 'grass' || newData.val() === 'savanna' || newData.val() === 'evening' || newData.val() === 'stars' || !newData.exists()"
+            ".validate": "newData.val() === 'plain' || newData.val() === 'grass' || newData.val() === 'savanna' || newData.val() === 'evening' || newData.val() === 'stars' || newData.val() === 'cheetah' || newData.val() === 'leopard' || newData.val() === 'lion' || !newData.exists()"
           }
         }
       }

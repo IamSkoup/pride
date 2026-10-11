@@ -2,6 +2,7 @@ import { get, onDisconnect, push, ref, serverTimestamp, set, update } from 'fire
 import { getDownloadURL, ref as storageRef, uploadBytesResumable } from 'firebase/storage';
 import { requireDb, requireStorage, requireAuth } from './firebase';
 import type { Chat, ChatKind, Media, Message, PollOption, Profile, Role } from '../types';
+import { activeSubscriptionTier, maxUploadMegabytes } from './entitlements';
 
 const clean = (text: string, max: number) => text.trim().slice(0, max);
 const safeName = (name: string) => name.replace(/[\\/\u0000-\u001f]/g, '_').slice(0, 120);
@@ -113,7 +114,12 @@ export async function uploadAvatar(uid: string, file: File): Promise<string> {
   return getDownloadURL(fileRef);
 }
 export async function uploadChatMedia(chatId: string, uid: string, file: File, onProgress?: (progress: number) => void, videoNote = false): Promise<Media> {
-  if (file.size > 25 * 1024 * 1024) throw new Error('Файл не должен превышать 25 МБ.');
+  const economyResponse = await apiFetch('/api/economy', { method: 'GET' });
+  if (!economyResponse.ok) throw new Error('Не удалось проверить лимит вложения. Попробуйте ещё раз.');
+  const wallet = await economyResponse.json() as { subscription?: { tier?: string; expiresAt?: number } };
+  const activeTier = activeSubscriptionTier(wallet.subscription);
+  const limitMb = maxUploadMegabytes(activeTier);
+  if (file.size > limitMb * 1024 * 1024) throw new Error(`Ваш лимит — ${limitMb} МБ за файл. Подписка Pride Club увеличивает размер вложений.`);
   const kind = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'file';
   if (!uid) throw new Error('Войдите снова.');
   const base = import.meta.env.VITE_WORKER_URL;

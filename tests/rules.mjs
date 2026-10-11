@@ -28,6 +28,8 @@ try {
   await assertSucceeds(alice.ref('userSettings/alice/theme').set('evening'));
   await assertFails(alice.ref('userSettings/alice/theme').set('ultraviolet'));
   await assertSucceeds(alice.ref('userChatPrefs/alice/group_test/background').set('savanna'));
+  await assertSucceeds(alice.ref('userChatPrefs/alice/group_test/background').set('cheetah'));
+  await assertSucceeds(alice.ref('userChatPrefs/alice/group_test/background').set('lion'));
   await assertFails(alice.ref('userChatPrefs/alice/group_test/background').set('ultraviolet'));
   await assertSucceeds(alice.ref('trail/alice/msg_saved').set({ chatId: 'group_test', messageId: 'msg_saved', preview: 'Private note', authorId: 'alice', chatTitle: 'Test', createdAt: Date.now(), mediaKind: 'image' }));
   await assertFails(bob.ref('trail/alice/msg_saved').get());

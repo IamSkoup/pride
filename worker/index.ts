@@ -145,16 +145,44 @@ async function uploadMedia(request: Request, env: Env, user: AuthUser, url: URL)
   const chat = await dbRequest<{ kind: string } | null>(env, `chats/${chatId}`);
   if (chat?.kind === 'channel' && role !== 'owner' && role !== 'admin') return json({ error: 'Forbidden' }, 403);
   if (await limited(env, request, `upload:${user.uid}`, 40, 3600)) return json({ error: 'Upload limit' }, 429);
+  const wallet = await dbRequest<Economy | null>(env, `economy/${user.uid}`);
+  const tier = wallet?.subscription && wallet.subscription.expiresAt > Date.now() ? wallet.subscription.tier : '';
+  const maxBytes = tier === 'lion' ? 100 : tier === 'leopard' ? 75 : tier === 'cheetah' ? 50 : 20;
   const mime = (request.headers.get('Content-Type') || 'application/octet-stream').split(';')[0].trim().toLowerCase();
   if (!/^(image\/(png|jpeg|gif|webp|avif)$|video\/(mp4|webm|quicktime)$|audio\/(mpeg|mp4|wav|ogg|webm|x-wav)$|application\/(pdf|zip|x-zip-compressed|octet-stream|msword|vnd\.openxmlformats-officedocument\.wordprocessingml\.document)$|text\/plain$)/.test(mime)) return json({ error: 'Unsupported file' }, 415);
   const bytes = await request.arrayBuffer();
-  if (bytes.byteLength === 0 || bytes.byteLength > 25 * 1024 * 1024) return json({ error: 'File too large' }, 413);
+  if (bytes.byteLength === 0 || bytes.byteLength > maxBytes * 1024 * 1024) return json({ error: `Размер файла превышает лимит ${maxBytes} МБ для вашего тарифа.` }, 413);
   const path = `chats/${chatId}/${user.uid}/${crypto.randomUUID()}_${name}`;
   const token = await accessToken(env);
   const storageUrl = `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(env.FIREBASE_STORAGE_BUCKET)}/o?uploadType=media&name=${encodeURIComponent(path)}`;
   const response = await fetch(storageUrl, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': mime }, body: bytes });
   if (!response.ok) throw new Error(`Storage ${response.status}`);
   return json({ path });
+}
+async function shareMedia(request: Request, env: Env, user: AuthUser) {
+  if (await limited(env, request, `share:${user.uid}`, 10, 3600)) return json({ error: 'Слишком много публичных ссылок.' }, 429);
+  const input = await request.json().catch(() => ({})) as { path?: string };
+  const path = input.path || '';
+  const match = /^chats\/([a-zA-Z0-9_-]{5,150})\/([a-zA-Z0-9_-]{5,150})\/([^/]{1,180})$/.exec(path);
+  if (!match || match[2] !== user.uid) return json({ error: 'Публиковать в профиле можно только собственные вложения из чатов.' }, 403);
+  const role = await memberRole(env, match[1], user.uid);
+  if (!role) return json({ error: 'Нет доступа к исходному чату.' }, 403);
+  const token = await accessToken(env);
+  const objectUrl = `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(env.FIREBASE_STORAGE_BUCKET)}/o/${encodeURIComponent(path)}`;
+  const metadataResponse = await fetch(objectUrl, { headers: { Authorization: `Bearer ${token}` } });
+  if (!metadataResponse.ok) return json({ error: 'Аудиофайл больше недоступен.' }, 404);
+  const object = await metadataResponse.json() as { metageneration?: string; contentType?: string; metadata?: Record<string, string> };
+  if (!object.contentType?.startsWith('audio/')) return json({ error: 'В профиль можно добавить только аудиофайл.' }, 415);
+  let publicToken = object.metadata?.firebaseStorageDownloadTokens?.split(',')[0];
+  if (!publicToken) {
+    publicToken = crypto.randomUUID();
+    const params = new URLSearchParams();
+    if (object.metageneration) params.set('ifMetagenerationMatch', object.metageneration);
+    const updateResponse = await fetch(`${objectUrl}?${params}`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ metadata: { ...object.metadata, firebaseStorageDownloadTokens: publicToken } }) });
+    if (!updateResponse.ok) return json({ error: 'Не удалось открыть доступ к треку.' }, 502);
+  }
+  const url = `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(env.FIREBASE_STORAGE_BUCKET)}/o/${encodeURIComponent(path)}?alt=media&token=${encodeURIComponent(publicToken)}`;
+  return json({ url });
 }
 async function forwardMedia(request: Request, env: Env, user: AuthUser) {
   const input = await request.json().catch(() => ({})) as { sourceChatId?: string; sourceMessageId?: string; targetChatId?: string };
@@ -168,13 +196,17 @@ async function forwardMedia(request: Request, env: Env, user: AuthUser) {
   if (targetChat.kind === 'channel' && targetRole !== 'owner' && targetRole !== 'admin') return json({ error: 'В канале публикуют только администраторы.' }, 403);
   const sourcePath = source.media.url;
   const match = /^chats\/([a-zA-Z0-9_-]{5,150})\/([a-zA-Z0-9_-]{5,150})\/([^/]{1,160})$/.exec(sourcePath);
-  if (!match || match[1] !== input.sourceChatId || match[2] !== source.senderId || source.media.size > 25 * 1024 * 1024) return json({ error: 'Исходное вложение недействительно.' }, 409);
+  if (!match || match[1] !== input.sourceChatId || match[2] !== source.senderId) return json({ error: 'Исходное вложение недействительно.' }, 409);
+  const wallet = await dbRequest<Economy | null>(env, `economy/${user.uid}`);
+  const tier = wallet?.subscription && wallet.subscription.expiresAt > Date.now() ? wallet.subscription.tier : '';
+  const maxBytes = (tier === 'lion' ? 100 : tier === 'leopard' ? 75 : tier === 'cheetah' ? 50 : 20) * 1024 * 1024;
+  if (source.media.size > maxBytes) return json({ error: `Пересылаемое вложение превышает ваш лимит ${maxBytes / 1024 / 1024} МБ.` }, 413);
   if (await limited(env, request, `forward:${user.uid}`, 40, 3600)) return json({ error: 'Слишком много пересылок.' }, 429);
   const token = await accessToken(env);
   const sourceResponse = await fetch(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(env.FIREBASE_STORAGE_BUCKET)}/o/${encodeURIComponent(sourcePath)}?alt=media`, { headers: { Authorization: `Bearer ${token}` } });
   if (!sourceResponse.ok) return json({ error: 'Исходное вложение больше недоступно.' }, 404);
   const bytes = await sourceResponse.arrayBuffer();
-  if (bytes.byteLength === 0 || bytes.byteLength > 25 * 1024 * 1024) return json({ error: 'Размер исходного файла недопустим.' }, 413);
+  if (bytes.byteLength === 0 || bytes.byteLength > maxBytes) return json({ error: 'Размер исходного файла недопустим.' }, 413);
   const path = `chats/${input.targetChatId}/${user.uid}/${crypto.randomUUID()}_${safeStorageName(source.media.name)}`;
   const uploadResponse = await fetch(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(env.FIREBASE_STORAGE_BUCKET)}/o?uploadType=media&name=${encodeURIComponent(path)}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': source.media.mime }, body: bytes });
   if (!uploadResponse.ok) throw new Error(`Storage ${uploadResponse.status}`);
@@ -282,6 +314,9 @@ const FRAMES: Record<string, { name: string; price: number }> = {
   ember: { name: 'Угольный отблеск', price: 35 },
   sunset: { name: 'Саванна в закатном золоте', price: 60 },
   constellation: { name: 'Звёздная тропа', price: 90 },
+  dune: { name: 'Линия дюн', price: 75 },
+  acacia: { name: 'Ветви акации', price: 110 },
+  copper: { name: 'Медный ореол', price: 130 },
 };
 async function updateEconomy(env: Env, uid: string, mutate: (state: Economy) => void) {
   for (let attempt = 0; attempt < 6; attempt++) {
@@ -394,6 +429,7 @@ export default {
         else if (url.pathname === '/api/links/join-public' && request.method === 'POST') result = await joinPublic(request, env, user);
         else if (url.pathname === '/api/chats/direct' && request.method === 'POST') result = await createDirect(request, env, user);
         else if (url.pathname === '/api/media' && request.method === 'POST') result = await uploadMedia(request, env, user, url);
+        else if (url.pathname === '/api/media/share' && request.method === 'POST') result = await shareMedia(request, env, user);
         else if (url.pathname === '/api/media/forward' && request.method === 'POST') result = await forwardMedia(request, env, user);
         else if (url.pathname === '/api/media' && request.method === 'GET') result = await downloadMedia(env, user, url);
         else if (url.pathname === '/api/media/delete' && request.method === 'POST') result = await deleteMedia(request, env, user);
