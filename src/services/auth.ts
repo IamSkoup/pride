@@ -35,7 +35,7 @@ export async function register(email: string, password: string, displayName: str
     await update(ref(database), {
       [`users/${uid}`]: profile,
       [`userPrivate/${uid}/email`]: credentials.user.email,
-      [`userSettings/${uid}/theme`]: 'dark'
+      [`userSettings/${uid}/theme`]: 'night'
     });
     return profile;
   } catch (error) {
@@ -71,10 +71,11 @@ export async function usernameAvailable(usernameInput: string) {
   }
   return ((await response.json()) as { available: boolean }).available;
 }
-export async function updateMyProfile(uid: string, before: Profile, changes: Partial<Pick<Profile, 'displayName' | 'bio' | 'avatar' | 'cover' | 'mood' | 'roar' | 'roarUntil' | 'username'>>) {
+export async function updateMyProfile(uid: string, before: Profile, changes: Partial<Pick<Profile, 'displayName' | 'bio' | 'avatar' | 'cover' | 'mood' | 'roar' | 'roarUntil' | 'username' | 'musicTitle' | 'musicUrl'>>) {
   const database = requireDb();
   const next = { ...changes };
   if (next.username) next.username = normalizeUsername(next.username);
+  if (next.musicUrl && !/^https:\/\//i.test(next.musicUrl)) throw new Error('Ссылка на музыку должна начинаться с https://.');
   if (next.username && next.username !== before.username) {
     if (!validUsername(next.username)) throw new Error('Недопустимый username.');
     const claim = await runTransaction(ref(database, `usernames/${next.username}`), current => current === null ? { uid } : undefined, { applyLocally: false });

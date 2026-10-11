@@ -2,9 +2,9 @@ export type Role = 'owner' | 'admin' | 'moderator' | 'member';
 export type RolePermission = 'edit_space' | 'invite_members' | 'remove_members' | 'manage_messages' | 'pin_messages' | 'publish_channel' | 'send_announcement' | 'manage_invites' | 'manage_roles';
 export type CustomRole = { id: string; name: string; color: string; priority: number; permissions: Partial<Record<RolePermission, boolean>> };
 export type PollOption = { id: string; text: string };
-export type ThemeName = 'day' | 'evening' | 'night';
+export type ThemeName = 'night';
 export type ChatKind = 'dm' | 'group' | 'channel';
-export type MediaKind = 'image' | 'video' | 'audio' | 'file';
+export type MediaKind = 'image' | 'video' | 'videoNote' | 'audio' | 'file';
 export type Profile = {
   uid: string;
   username: string;
@@ -15,6 +15,8 @@ export type Profile = {
   mood?: string;
   roar?: string;
   roarUntil?: number;
+  musicTitle?: string;
+  musicUrl?: string;
   createdAt: number;
 };
 export type Chat = {

@@ -272,6 +272,108 @@ async function pushMessage(request: Request, env: Env, user: AuthUser) {
   }
   return json({ delivered });
 }
+type Economy = { balance: number; subscription?: { tier: string; expiresAt: number }; frames?: Record<string, number>; equippedFrame?: string; dailyAt?: number; transfers?: Record<string, { to: string; amount: number; status: 'pending' | 'complete' }>; transfersIn?: Record<string, boolean>; ledger?: Array<{ id: string; kind: string; amount: number; label: string; at: number }> };
+const PLANS: Record<string, { name: string; monthly: number; yearly: number }> = {
+  cheetah: { name: 'Cheetah', monthly: 53, yearly: 530 },
+  leopard: { name: 'Leopard', monthly: 99, yearly: 990 },
+  lion: { name: 'Lion', monthly: 166, yearly: 1660 },
+};
+const FRAMES: Record<string, { name: string; price: number }> = {
+  ember: { name: 'Угольный отблеск', price: 35 },
+  sunset: { name: 'Саванна в закатном золоте', price: 60 },
+  constellation: { name: 'Звёздная тропа', price: 90 },
+};
+async function updateEconomy(env: Env, uid: string, mutate: (state: Economy) => void) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const token = await accessToken(env);
+    const response = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/economy/${uid}.json`, { headers: { Authorization: `Bearer ${token}`, 'X-Firebase-ETag': 'true' } });
+    if (!response.ok) throw new Error(`Database ${response.status}`);
+    const state = ((await response.json()) || { balance: 0, ledger: [] }) as Economy;
+    const value: Economy = { ...state, balance: Math.max(0, Number(state.balance) || 0), ledger: Array.isArray(state.ledger) ? state.ledger.slice(-99) : [] };
+    mutate(value);
+    const write = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/economy/${uid}.json`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'If-Match': response.headers.get('ETag') || 'null_etag' }, body: JSON.stringify(value) });
+    if (write.status === 412) continue;
+    if (!write.ok) throw new Error(`Database ${write.status}`);
+    return value;
+  }
+  throw new Error('Database transaction conflict');
+}
+async function economyRequest(request: Request, env: Env, user: AuthUser) {
+  const uid = user.uid;
+  if (request.method === 'GET') return json((await dbRequest<Economy | null>(env, `economy/${uid}`)) || { balance: 0, ledger: [] });
+  if (await limited(env, request, `economy:${uid}`, 15, 60)) return json({ error: 'Слишком много операций. Попробуйте через минуту.' }, 429);
+  const input = await request.json().catch(() => ({})) as { action?: string; tier?: string; period?: string; frame?: string; equipped?: string; recipient?: string; amount?: number; transferId?: string };
+  const now = Date.now();
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const token = await accessToken(env);
+    const response = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/economy/${uid}.json`, { headers: { Authorization: `Bearer ${token}`, 'X-Firebase-ETag': 'true' } });
+    if (!response.ok) throw new Error(`Database ${response.status}`);
+    const etag = response.headers.get('ETag');
+    const current = ((await response.json()) || { balance: 0, ledger: [] }) as Economy;
+    const state: Economy = { ...current, balance: Math.max(0, Number(current.balance) || 0), ledger: Array.isArray(current.ledger) ? current.ledger.slice(-99) : [] };
+    let amount = 0, kind = '', label = '';
+    if (input.action === 'daily') {
+      if (state.dailyAt && now - state.dailyAt < 20 * 60 * 60 * 1000) return json({ error: 'Ежедневную награду можно забрать раз в день.' }, 409);
+      amount = -3; kind = 'daily'; label = 'Награда за возвращение'; state.dailyAt = now; state.balance += 3;
+    } else if (input.action === 'subscribe') {
+      const plan = input.tier ? PLANS[input.tier] : undefined;
+      if (!plan || (input.period !== 'month' && input.period !== 'year')) return json({ error: 'Неизвестный тариф.' }, 400);
+      const price = input.period === 'year' ? plan.yearly : plan.monthly;
+      if (state.balance < price) return json({ error: 'Недостаточно Claws. Получите ежедневную награду или пополните баланс, когда подключим оплату.' }, 402);
+      const existing = state.subscription?.tier === input.tier && state.subscription.expiresAt > now ? state.subscription.expiresAt : now;
+      state.subscription = { tier: input.tier, expiresAt: existing + (input.period === 'year' ? 365 : 30) * 86400000 };
+      state.balance -= price; amount = -price; kind = 'subscription'; label = `${plan.name} · ${input.period === 'year' ? 'год' : 'месяц'}`;
+    } else if (input.action === 'frame') {
+      const frame = input.frame ? FRAMES[input.frame] : undefined;
+      if (!frame) return json({ error: 'Неизвестное оформление.' }, 400);
+      const until = state.frames?.[input.frame!] || 0;
+      if (until > now) return json({ error: 'Это оформление уже активно.' }, 409);
+      if (state.balance < frame.price) return json({ error: 'Недостаточно Claws для этой рамки.' }, 402);
+      state.balance -= frame.price; state.frames = { ...state.frames, [input.frame!]: now + 30 * 86400000 }; state.equippedFrame = input.frame;
+      amount = -frame.price; kind = 'frame'; label = `${frame.name} · 30 дней`;
+    } else if (input.action === 'equip') {
+      const frame = input.equipped || '';
+      if (frame && (!state.frames?.[frame] || state.frames[frame] <= now)) return json({ error: 'Срок этого оформления закончился.' }, 409);
+      state.equippedFrame = frame || undefined;
+      amount = 0; kind = 'style'; label = frame ? `Выбрано: ${FRAMES[frame]?.name || frame}` : 'Снята рамка';
+    } else if (input.action === 'gift') {
+      const recipientName = typeof input.recipient === 'string' ? input.recipient.replace(/^@/, '').toLowerCase() : '';
+      const giftAmount = Number(input.amount);
+      if (!safeUsername(recipientName) || !Number.isSafeInteger(giftAmount) || giftAmount < 1 || giftAmount > 5000 || !safeId(input.transferId)) return json({ error: 'Укажите @username и сумму от 1 до 5000 Claws.' }, 400);
+      const claim = await dbRequest<{ uid?: string } | null>(env, `usernames/${recipientName}`);
+      const recipientUid = claim?.uid;
+      if (!safeId(recipientUid) || recipientUid === uid) return json({ error: recipientUid === uid ? 'Нельзя отправить Claws самому себе.' : 'Пользователь не найден.' }, 404);
+      const transferKey = `${uid}_${input.transferId}`;
+      const prior = state.transfers?.[transferKey];
+      if (prior && (prior.to !== recipientUid || prior.amount !== giftAmount)) return json({ error: 'ID перевода уже использовался для другой операции.' }, 409);
+      if (prior?.status === 'complete') return json(state);
+      if (!prior) {
+        if (state.balance < giftAmount) return json({ error: 'Недостаточно Claws для подарка.' }, 402);
+        state.balance -= giftAmount;
+        state.transfers = { ...state.transfers, [transferKey]: { to: recipientUid, amount: giftAmount, status: 'pending' } };
+        amount = -giftAmount; kind = 'gift_sent'; label = `Подарок · @${recipientName}`;
+      }
+      if (amount) state.ledger.push({ id: crypto.randomUUID(), kind, amount, label, at: now });
+      const write = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/economy/${uid}.json`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'If-Match': etag || 'null_etag' }, body: JSON.stringify(state) });
+      if (write.status === 412) continue;
+      if (!write.ok) throw new Error(`Database ${write.status}`);
+      const updatedRecipient = await updateEconomy(env, recipientUid, value => {
+        if (value.transfersIn?.[transferKey]) return;
+        value.balance += giftAmount;
+        value.transfersIn = { ...value.transfersIn, [transferKey]: true };
+        value.ledger!.push({ id: crypto.randomUUID(), kind: 'gift_received', amount: giftAmount, label: 'Подарок от участника прайда', at: now });
+      });
+      const completed = await updateEconomy(env, uid, value => { if (value.transfers?.[transferKey]) value.transfers = { ...value.transfers, [transferKey]: { ...value.transfers[transferKey], status: 'complete' } }; });
+      return json({ ...completed, transfer: { id: transferKey, recipientBalance: updatedRecipient.balance } });
+    } else return json({ error: 'Неизвестное действие.' }, 400);
+    state.ledger.push({ id: crypto.randomUUID(), kind, amount, label, at: now });
+    const write = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/economy/${uid}.json`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'If-Match': etag || 'null_etag' }, body: JSON.stringify(state) });
+    if (write.status === 412) continue;
+    if (!write.ok) throw new Error(`Database ${write.status}`);
+    return json(state);
+  }
+  return json({ error: 'Баланс одновременно меняется. Повторите операцию.' }, 409);
+}
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const origin = request.headers.get('Origin');
@@ -297,6 +399,7 @@ export default {
         else if (url.pathname === '/api/media/delete' && request.method === 'POST') result = await deleteMedia(request, env, user);
         else if (url.pathname === '/api/messages/delete' && request.method === 'POST') result = await deleteMessage(request, env, user);
         else if (url.pathname === '/api/push/message' && request.method === 'POST') result = await pushMessage(request, env, user);
+        else if (url.pathname === '/api/economy' && (request.method === 'GET' || request.method === 'POST')) result = await economyRequest(request, env, user);
         else result = json({ error: 'Not found' }, 404);
       }
     } catch (error) {
