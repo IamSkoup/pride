@@ -14,7 +14,7 @@ Never put a Firebase service-account key or a VAPID private key in `.env`, front
 
 The production base path is `/pride/`. The build emits `dist/404.html` from the same app shell as `index.html` so GitHub Pages can serve BrowserRouter deep links after a refresh. The Pages workflow builds the app and supplies the `VITE_FIREBASE_*` values and `VITE_FIREBASE_VAPID_KEY` from GitHub Actions secrets. `VITE_WORKER_URL` is set to `https://pride-messenger-worker.kapani.workers.dev` in the workflow.
 
-Add/update these repository Actions secrets before publishing: `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_DATABASE_URL`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`, and `VITE_FIREBASE_VAPID_KEY` (the rotated public VAPID key).
+Add/update these repository Actions secrets before publishing: `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_DATABASE_URL`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`, and `VITE_FIREBASE_VAPID_KEY` (the rotated public VAPID key). The Pages workflow passes each value to Vite during the build.
 
 ## Firebase rules
 
@@ -36,6 +36,8 @@ npx wrangler --config worker/wrangler.toml tail
 ```
 
 The Worker needs the existing KV binding `RATE_LIMIT` and variables configured in that TOML. Keep `FIREBASE_PRIVATE_KEY` only as a Cloudflare Worker secret. The allowed origins are the production Pages origin (`https://iamskoup.github.io`) and exact local dev origin (`http://localhost:5173`).
+
+Calls use the Worker route `/api/calls/ice` for one hour TURN credentials. To enable calls between restrictive or different networks, configure a reachable TURN service, put its comma-separated `turn:`/`turns:` URLs in `TURN_URLS`, and set its coturn shared secret with `npx wrangler --config worker/wrangler.toml secret put TURN_SHARED_SECRET`. The TURN service must use the same shared secret and the standard time-limited username format. Without this service, the app falls back to STUN, which cannot connect every network pair.
 
 Before a real Worker deployment, set/verify the Cloudflare secret `FIREBASE_PRIVATE_KEY`; then run `npx wrangler --config worker/wrangler.toml deploy` only when a production release is intended. No production deployment is part of a local build or dry-run.
 

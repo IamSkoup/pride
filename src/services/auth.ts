@@ -33,8 +33,12 @@ export async function register(email: string, password: string, displayName: str
     const profile: Profile = { uid, username, displayName: displayName.trim(), bio: '', createdAt: Date.now() };
     await updateProfile(credentials.user, { displayName: profile.displayName });
     await update(ref(database), {
-      [`users/${uid}`]: profile,
-      [`publicProfiles/${uid}`]: { uid, username, displayName: profile.displayName },
+      [`users/${uid}/uid`]: profile.uid,
+      [`users/${uid}/username`]: profile.username,
+      [`users/${uid}/displayName`]: profile.displayName,
+      [`users/${uid}/bio`]: profile.bio || '',
+      [`users/${uid}/createdAt`]: profile.createdAt,
+      [`publicProfiles/${uid}`]: { uid, username, displayName: profile.displayName, bio: '', mood: 'На связи' },
       [`userPrivate/${uid}/email`]: credentials.user.email,
       [`userSettings/${uid}/theme`]: 'night'
     });
@@ -72,7 +76,8 @@ export async function usernameAvailable(usernameInput: string) {
   }
   return ((await response.json()) as { available: boolean }).available;
 }
-export async function updateMyProfile(uid: string, before: Profile, changes: Partial<Pick<Profile, 'displayName' | 'bio' | 'avatar' | 'cover' | 'mood' | 'roar' | 'roarUntil' | 'username' | 'musicTitle' | 'musicUrl'>>) {
+type ProfileChanges = Partial<Pick<Profile, 'displayName' | 'bio' | 'mood' | 'roar' | 'roarUntil' | 'username' | 'musicTitle' | 'musicUrl'>> & { avatar?: string | null; cover?: string | null };
+export async function updateMyProfile(uid: string, before: Profile, changes: ProfileChanges) {
   const database = requireDb();
   const next = { ...changes };
   if (next.username) next.username = normalizeUsername(next.username);
@@ -85,8 +90,7 @@ export async function updateMyProfile(uid: string, before: Profile, changes: Par
       const writes: Record<string, string | number | null | PublicProfile> = { [`usernames/${before.username}`]: null };
       for (const [field, value] of Object.entries(next)) if (value !== undefined) writes[`users/${uid}/${field}`] = value;
       const merged = { ...before, ...next, username: next.username };
-      const publicProfile: PublicProfile = { uid, username: merged.username, displayName: merged.displayName };
-      if (merged.avatar) publicProfile.avatar = merged.avatar;
+      const publicProfile: PublicProfile = publicProjection(uid, merged);
       writes[`publicProfiles/${uid}`] = publicProfile;
       await update(ref(database), writes);
     } catch (error) {
@@ -97,17 +101,28 @@ export async function updateMyProfile(uid: string, before: Profile, changes: Par
     const writes: Record<string, string | number | null | PublicProfile> = {};
     for (const [field, value] of Object.entries(next)) if (value !== undefined) writes[`users/${uid}/${field}`] = value;
     const merged = { ...before, ...next };
-    const publicProfile: PublicProfile = { uid, username: merged.username, displayName: merged.displayName };
-    if (merged.avatar) publicProfile.avatar = merged.avatar;
+    const publicProfile: PublicProfile = publicProjection(uid, merged);
     writes[`publicProfiles/${uid}`] = publicProfile;
     await update(ref(database), writes);
   }
 }
-export async function findUser(usernameInput: string): Promise<Profile | null> {
+export async function findUser(usernameInput: string): Promise<PublicProfile | null> {
   const username = normalizeUsername(usernameInput);
   if (!validUsername(username)) return null;
   const usernameSnap = await get(ref(requireDb(), `usernames/${username}`));
   const uid = usernameSnap.val()?.uid as string | undefined;
   if (!uid) return null;
-  return (await get(ref(requireDb(), `users/${uid}`))).val() as Profile | null;
+  return (await get(ref(requireDb(), `publicProfiles/${uid}`))).val() as PublicProfile | null;
+}
+
+function publicProjection(uid: string, profile: Omit<Profile, 'avatar' | 'cover'> & { avatar?: string | null; cover?: string | null }): PublicProfile {
+  const projection: PublicProfile = {
+    uid, username: profile.username, displayName: profile.displayName,
+    bio: profile.bio || '',
+    mood: profile.mood || 'На связи', roar: profile.roar || '', roarUntil: profile.roarUntil || 0,
+    musicTitle: profile.musicTitle || '', musicUrl: profile.musicUrl || '',
+  };
+  if (profile.avatar) projection.avatar = profile.avatar;
+  if (profile.cover) projection.cover = profile.cover;
+  return projection;
 }

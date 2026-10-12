@@ -19,7 +19,7 @@ export type Profile = {
   musicUrl?: string;
   createdAt: number;
 };
-export type PublicProfile = Pick<Profile, 'uid' | 'username' | 'displayName'> & { avatar?: string };
+export type PublicProfile = Pick<Profile, 'uid' | 'username' | 'displayName'> & Partial<Pick<Profile, 'bio' | 'avatar' | 'cover' | 'mood' | 'roar' | 'roarUntil' | 'musicTitle' | 'musicUrl'>>;
 export type Chat = {
   id: string;
   kind: ChatKind;

@@ -6,6 +6,8 @@ type Env = {
   FIREBASE_SERVICE_ACCOUNT_EMAIL: string;
   FIREBASE_PRIVATE_KEY: string;
   FRONTEND_ORIGIN: string;
+  TURN_URLS?: string;
+  TURN_SHARED_SECRET?: string;
   RATE_LIMIT: { get(key: string): Promise<string | null>; put(key: string, value: string, options: { expirationTtl: number }): Promise<void> };
 };
 type AuthUser = { uid: string; email?: string };
@@ -60,6 +62,18 @@ async function verifyUser(request: Request, env: Env): Promise<AuthUser | null> 
   const user = ((await response.json()) as { users?: Array<{ localId: string; email?: string }> }).users?.[0];
   return user ? { uid: user.localId, email: user.email } : null;
 }
+async function callIceConfiguration(request: Request, env: Env, user: AuthUser) {
+  if (await limited(env, request, `ice:${user.uid}`, 30, 60)) return json({ error: 'Слишком много запросов настроек звонка.' }, 429);
+  const urls = (env.TURN_URLS || '').split(',').map(value => value.trim()).filter(Boolean);
+  if (!urls.length || !env.TURN_SHARED_SECRET) return json({ error: 'Сервер TURN не настроен для этого проекта.' }, 503);
+  const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+  const username = `${expiresAt}:${user.uid}`;
+  const key = await crypto.subtle.importKey('raw', encoder.encode(env.TURN_SHARED_SECRET), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+  const digest = new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(username)));
+  let binary = ''; for (const byte of digest) binary += String.fromCharCode(byte);
+  const credential = btoa(binary);
+  return json({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls, username, credential }] });
+}
 async function limited(env: Env, request: Request, bucket: string, maximum: number, seconds: number) {
   const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
   const window = Math.floor(Date.now() / (seconds * 1000));
@@ -69,8 +83,8 @@ async function limited(env: Env, request: Request, bucket: string, maximum: numb
   await env.RATE_LIMIT.put(key, String(count + 1), { expirationTtl: seconds + 60 });
   return false;
 }
-function safeId(value: unknown) { return typeof value === 'string' && /^[a-zA-Z0-9_-]{5,150}$/.test(value); }
-function safeUsername(value: unknown) { return typeof value === 'string' && /^[a-z0-9_]{3,24}$/.test(value); }
+function safeId(value: unknown): value is string { return typeof value === 'string' && /^[a-zA-Z0-9_-]{5,150}$/.test(value); }
+function safeUsername(value: unknown): value is string { return typeof value === 'string' && /^[a-z0-9_]{3,24}$/.test(value); }
 async function resolveUsername(request: Request, env: Env) {
   if (await limited(env, request, 'login', 10, 60)) return json({ error: 'Too many attempts' }, 429);
   const input = await request.json().catch(() => ({})) as { username?: string; password?: string };
@@ -112,6 +126,13 @@ async function joinPublic(request: Request, env: Env, user: AuthUser) {
   return json({ chatId: input.chatId });
 }
 async function memberRole(env: Env, chatId: string, uid: string) { return dbRequest<string | null>(env, `chatMembers/${chatId}/${uid}`); }
+async function canPublishInChannel(env: Env, chatId: string, uid: string, role: string) {
+  if (role === 'owner' || role === 'admin') return true;
+  const assignment = await dbRequest<string | null>(env, `roleAssignments/${chatId}/${uid}`);
+  if (!assignment) return false;
+  const customRole = await dbRequest<{ permissions?: { publish_channel?: boolean } } | null>(env, `chatRoles/${chatId}/${assignment}`);
+  return customRole?.permissions?.publish_channel === true;
+}
 async function createDirect(request: Request, env: Env, user: AuthUser) {
   if (await limited(env, request, `dm:${user.uid}`, 30, 3600)) return json({ error: 'Too many chats' }, 429);
   const input = await request.json().catch(() => ({})) as { otherUid?: string };
@@ -143,13 +164,13 @@ async function uploadMedia(request: Request, env: Env, user: AuthUser, url: URL)
   const role = await memberRole(env, chatId, user.uid);
   if (!role) return json({ error: 'Forbidden' }, 403);
   const chat = await dbRequest<{ kind: string } | null>(env, `chats/${chatId}`);
-  if (chat?.kind === 'channel' && role !== 'owner' && role !== 'admin') return json({ error: 'Forbidden' }, 403);
+  if (chat?.kind === 'channel' && !(await canPublishInChannel(env, chatId, user.uid, role))) return json({ error: 'У вас нет права публиковать в этом канале.' }, 403);
   if (await limited(env, request, `upload:${user.uid}`, 40, 3600)) return json({ error: 'Upload limit' }, 429);
-  const wallet = await dbRequest<Economy | null>(env, `economy/${user.uid}`);
+  const wallet = await readEconomy(env, user.uid);
   const tier = wallet?.subscription && wallet.subscription.expiresAt > Date.now() ? wallet.subscription.tier : '';
   const maxBytes = tier === 'lion' ? 100 : tier === 'leopard' ? 75 : tier === 'cheetah' ? 50 : 20;
   const mime = (request.headers.get('Content-Type') || 'application/octet-stream').split(';')[0].trim().toLowerCase();
-  if (!/^(image\/(png|jpeg|gif|webp|avif)$|video\/(mp4|webm|quicktime)$|audio\/(mpeg|mp4|wav|ogg|webm|x-wav)$|application\/(pdf|zip|x-zip-compressed|octet-stream|msword|vnd\.openxmlformats-officedocument\.wordprocessingml\.document)$|text\/plain$)/.test(mime)) return json({ error: 'Unsupported file' }, 415);
+  if (!/^(image\/(png|jpeg|gif|webp|avif)|video\/(mp4|webm|quicktime)|audio\/(mpeg|mp4|wav|ogg|webm|x-wav)|application\/(pdf|zip|x-zip-compressed|octet-stream|msword|rtf|json|vnd\.ms-excel|vnd\.ms-powerpoint|vnd\.rar|x-rar-compressed|x-7z-compressed|x-tar|gzip|vnd\.openxmlformats-officedocument\.(wordprocessingml\.document|spreadsheetml\.sheet|presentationml\.presentation))|text\/(plain|csv|markdown|html|xml))$/.test(mime)) return json({ error: 'Формат файла не поддерживается. Можно отправлять изображения, аудио, видео, документы и архивы.' }, 415);
   const bytes = await request.arrayBuffer();
   if (bytes.byteLength === 0 || bytes.byteLength > maxBytes * 1024 * 1024) return json({ error: `Размер файла превышает лимит ${maxBytes} МБ для вашего тарифа.` }, 413);
   const path = `chats/${chatId}/${user.uid}/${crypto.randomUUID()}_${name}`;
@@ -158,6 +179,36 @@ async function uploadMedia(request: Request, env: Env, user: AuthUser, url: URL)
   const response = await fetch(storageUrl, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': mime }, body: bytes });
   if (!response.ok) throw new Error(`Storage ${response.status}`);
   return json({ path });
+}
+async function uploadChatIcon(request: Request, env: Env, user: AuthUser, url: URL) {
+  const chatId = url.searchParams.get('chatId');
+  if (!safeId(chatId)) return json({ error: 'Некорректное пространство.' }, 400);
+  const [role, chat, assignment] = await Promise.all([
+    memberRole(env, chatId, user.uid),
+    dbRequest<{ creatorId: string; kind: string } | null>(env, `chats/${chatId}`),
+    dbRequest<string | null>(env, `roleAssignments/${chatId}/${user.uid}`),
+  ]);
+  if (!role || !chat) return json({ error: 'Нет доступа к пространству.' }, 403);
+  let canEdit = role === 'owner' || role === 'admin';
+  if (!canEdit && assignment) {
+    const customRole = await dbRequest<{ permissions?: { edit_space?: boolean } } | null>(env, `chatRoles/${chatId}/${assignment}`);
+    canEdit = customRole?.permissions?.edit_space === true;
+  }
+  if (!canEdit) return json({ error: 'Изменять иконку могут владелец, администраторы и уполномоченные роли.' }, 403);
+  if ((request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase() !== 'image/webp') return json({ error: 'Для иконки требуется изображение WebP.' }, 415);
+  const bytes = await request.arrayBuffer();
+  if (!bytes.byteLength || bytes.byteLength > 2 * 1024 * 1024) return json({ error: 'Иконка должна быть меньше 2 МБ.' }, 413);
+  const path = `chats/${chatId}/${user.uid}/icon_${crypto.randomUUID()}.webp`;
+  const token = await accessToken(env);
+  const encodedPath = encodeURIComponent(path);
+  const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(env.FIREBASE_STORAGE_BUCKET)}/o?uploadType=media&name=${encodedPath}`;
+  const uploaded = await fetch(uploadUrl, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/webp' }, body: bytes });
+  if (!uploaded.ok) throw new Error(`Storage ${uploaded.status}`);
+  const objectUrl = `https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(env.FIREBASE_STORAGE_BUCKET)}/o/${encodedPath}`;
+  const publicToken = crypto.randomUUID();
+  const patched = await fetch(objectUrl, { method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ metadata: { firebaseStorageDownloadTokens: publicToken } }) });
+  if (!patched.ok) throw new Error(`Storage ${patched.status}`);
+  return json({ url: `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(env.FIREBASE_STORAGE_BUCKET)}/o/${encodedPath}?alt=media&token=${encodeURIComponent(publicToken)}` });
 }
 async function shareMedia(request: Request, env: Env, user: AuthUser) {
   if (await limited(env, request, `share:${user.uid}`, 10, 3600)) return json({ error: 'Слишком много публичных ссылок.' }, 429);
@@ -193,11 +244,11 @@ async function forwardMedia(request: Request, env: Env, user: AuthUser) {
     dbRequest<{ senderId: string; media?: { kind: string; name: string; url: string; size: number; mime: string } } | null>(env, `messages/${input.sourceChatId}/${input.sourceMessageId}`),
   ]);
   if (!sourceRole || !targetRole || !source?.media || !targetChat) return json({ error: 'Исходное вложение или доступ к чату недоступны.' }, 403);
-  if (targetChat.kind === 'channel' && targetRole !== 'owner' && targetRole !== 'admin') return json({ error: 'В канале публикуют только администраторы.' }, 403);
+  if (targetChat.kind === 'channel' && !(await canPublishInChannel(env, input.targetChatId, user.uid, targetRole))) return json({ error: 'У вас нет права публиковать в этом канале.' }, 403);
   const sourcePath = source.media.url;
   const match = /^chats\/([a-zA-Z0-9_-]{5,150})\/([a-zA-Z0-9_-]{5,150})\/([^/]{1,160})$/.exec(sourcePath);
   if (!match || match[1] !== input.sourceChatId || match[2] !== source.senderId) return json({ error: 'Исходное вложение недействительно.' }, 409);
-  const wallet = await dbRequest<Economy | null>(env, `economy/${user.uid}`);
+  const wallet = await readEconomy(env, user.uid);
   const tier = wallet?.subscription && wallet.subscription.expiresAt > Date.now() ? wallet.subscription.tier : '';
   const maxBytes = (tier === 'lion' ? 100 : tier === 'leopard' ? 75 : tier === 'cheetah' ? 50 : 20) * 1024 * 1024;
   if (source.media.size > maxBytes) return json({ error: `Пересылаемое вложение превышает ваш лимит ${maxBytes / 1024 / 1024} МБ.` }, 413);
@@ -243,12 +294,18 @@ async function deleteMessage(request: Request, env: Env, user: AuthUser) {
   if (await limited(env, request, `delete:${user.uid}`, 60, 3600)) return json({ error: 'Слишком много удалений. Попробуйте позже.' }, 429);
   const input = await request.json().catch(() => ({})) as { chatId?: string; messageId?: string };
   if (!safeId(input.chatId) || !safeId(input.messageId)) return json({ error: 'Некорректное сообщение.' }, 400);
-  const [message, role] = await Promise.all([
+  const [message, role, assignment] = await Promise.all([
     dbRequest<{ id: string; senderId: string; text?: string; media?: { url: string }; createdAt: number } | null>(env, `messages/${input.chatId}/${input.messageId}`),
     memberRole(env, input.chatId, user.uid),
+    dbRequest<string | null>(env, `roleAssignments/${input.chatId}/${user.uid}`),
   ]);
   if (!message || !role) return json({ error: 'Сообщение не найдено или у вас нет доступа.' }, 404);
-  if (message.senderId !== user.uid && role !== 'owner' && role !== 'moderator') return json({ error: 'Удалить сообщение у всех может только автор или модератор.' }, 403);
+  let canManageMessages = role === 'owner' || role === 'moderator';
+  if (!canManageMessages && assignment) {
+    const customRole = await dbRequest<{ permissions?: { manage_messages?: boolean } } | null>(env, `chatRoles/${input.chatId}/${assignment}`);
+    canManageMessages = customRole?.permissions?.manage_messages === true;
+  }
+  if (message.senderId !== user.uid && !canManageMessages) return json({ error: 'Удалить сообщение у всех может только автор, модератор или участник с соответствующим разрешением.' }, 403);
   const token = await accessToken(env);
   if (message.media?.url) {
     const match = /^chats\/([a-zA-Z0-9_-]{5,150})\/([a-zA-Z0-9_-]{5,150})\/([^/]{1,160})$/.exec(message.media.url);
@@ -327,18 +384,27 @@ const SAVANNA_GIFTS: Record<string, { name: string; price: number }> = {
 async function updateEconomy(env: Env, uid: string, mutate: (state: Economy) => void) {
   for (let attempt = 0; attempt < 6; attempt++) {
     const token = await accessToken(env);
-    const response = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/economy/${uid}.json`, { headers: { Authorization: `Bearer ${token}`, 'X-Firebase-ETag': 'true' } });
+    const response = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/users/${uid}/claws.json`, { headers: { Authorization: `Bearer ${token}`, 'X-Firebase-ETag': 'true' } });
     if (!response.ok) throw new Error(`Database ${response.status}`);
-    const state = ((await response.json()) || { balance: 0, ledger: [] }) as Economy;
+    const current = await response.json() as Economy | null;
+    const legacy = current ? null : await dbRequest<Economy | null>(env, `economy/${uid}`);
+    const state = (current || legacy || { balance: 0, ledger: [] }) as Economy;
     const value: Economy = { ...state, balance: Math.max(0, Number(state.balance) || 0), ledger: Array.isArray(state.ledger) ? state.ledger.slice(-99) : [] };
     mutate(value);
-    const write = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/economy/${uid}.json`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'If-Match': response.headers.get('ETag') || 'null_etag' }, body: JSON.stringify(value) });
+    const write = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/users/${uid}/claws.json`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'If-Match': response.headers.get('ETag') || 'null_etag' }, body: JSON.stringify(value) });
     if (write.status === 412) continue;
     if (!write.ok) throw new Error(`Database ${write.status}`);
+    if (legacy) await dbRequest(env, `economy/${uid}`, 'DELETE').catch(() => {});
     await writePublicStyle(env, uid, value).catch(() => {});
     return value;
   }
   throw new Error('Database transaction conflict');
+}
+async function readEconomy(env: Env, uid: string): Promise<Economy> {
+  const current = await dbRequest<Economy | null>(env, `users/${uid}/claws`);
+  if (current) return current;
+  const legacy = await dbRequest<Economy | null>(env, `economy/${uid}`);
+  return legacy || { balance: 0, ledger: [] };
 }
 async function writePublicStyle(env: Env, uid: string, economy: Economy) {
   await dbRequest(env, `publicProfileStyles/${uid}`, 'PUT', {
@@ -349,28 +415,32 @@ async function writePublicStyle(env: Env, uid: string, economy: Economy) {
 }
 async function economyRequest(request: Request, env: Env, user: AuthUser) {
   const uid = user.uid;
-  if (request.method === 'GET') return json((await dbRequest<Economy | null>(env, `economy/${uid}`)) || { balance: 0, ledger: [] });
+  if (request.method === 'GET') return json(await updateEconomy(env, uid, () => {}));
   if (await limited(env, request, `economy:${uid}`, 15, 60)) return json({ error: 'Слишком много операций. Попробуйте через минуту.' }, 429);
   const input = await request.json().catch(() => ({})) as { action?: string; tier?: string; period?: string; frame?: string; equipped?: string };
   const now = Date.now();
   for (let attempt = 0; attempt < 6; attempt++) {
     const token = await accessToken(env);
-    const response = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/economy/${uid}.json`, { headers: { Authorization: `Bearer ${token}`, 'X-Firebase-ETag': 'true' } });
+    const response = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/users/${uid}/claws.json`, { headers: { Authorization: `Bearer ${token}`, 'X-Firebase-ETag': 'true' } });
     if (!response.ok) throw new Error(`Database ${response.status}`);
     const etag = response.headers.get('ETag');
-    const current = ((await response.json()) || { balance: 0, ledger: [] }) as Economy;
+    const stored = await response.json() as Economy | null;
+    const legacy = stored ? null : await dbRequest<Economy | null>(env, `economy/${uid}`);
+    const current = (stored || legacy || { balance: 0, ledger: [] }) as Economy;
     const state: Economy = { ...current, balance: Math.max(0, Number(current.balance) || 0), ledger: Array.isArray(current.ledger) ? current.ledger.slice(-99) : [] };
     let amount = 0, kind = '', label = '';
     if (input.action === 'daily') {
       if (state.dailyAt && now - state.dailyAt < 20 * 60 * 60 * 1000) return json({ error: 'Ежедневную награду можно забрать раз в день.' }, 409);
-      amount = -3; kind = 'daily'; label = 'Награда за возвращение'; state.dailyAt = now; state.balance += 3;
+      amount = 3; kind = 'daily'; label = 'Награда за возвращение'; state.dailyAt = now; state.balance += 3;
     } else if (input.action === 'subscribe') {
-      const plan = input.tier ? PLANS[input.tier] : undefined;
-      if (!plan || (input.period !== 'month' && input.period !== 'year')) return json({ error: 'Неизвестный тариф.' }, 400);
+      const selectedTier = input.tier;
+      const plan = selectedTier ? PLANS[selectedTier] : undefined;
+      if (!selectedTier || !plan || (input.period !== 'month' && input.period !== 'year')) return json({ error: 'Неизвестный тариф.' }, 400);
       const price = input.period === 'year' ? plan.yearly : plan.monthly;
       if (state.balance < price) return json({ error: 'Недостаточно Claws. Получите ежедневную награду или пополните баланс, когда подключим оплату.' }, 402);
-      const existing = state.subscription?.tier === input.tier && state.subscription.expiresAt > now ? state.subscription.expiresAt : now;
-      state.subscription = { tier: input.tier, expiresAt: existing + (input.period === 'year' ? 365 : 30) * 86400000 };
+      const existingSubscription = state.subscription;
+      const existing = existingSubscription?.tier === selectedTier && existingSubscription.expiresAt > now ? existingSubscription.expiresAt : now;
+      state.subscription = { tier: selectedTier, expiresAt: existing + (input.period === 'year' ? 365 : 30) * 86400000 };
       state.balance -= price; amount = -price; kind = 'subscription'; label = `${plan.name} · ${input.period === 'year' ? 'год' : 'месяц'}`;
     } else if (input.action === 'frame') {
       const frame = input.frame ? FRAMES[input.frame] : undefined;
@@ -386,10 +456,13 @@ async function economyRequest(request: Request, env: Env, user: AuthUser) {
       state.equippedFrame = frame || undefined;
       amount = 0; kind = 'style'; label = frame ? `Выбрано: ${FRAMES[frame]?.name || frame}` : 'Снята рамка';
     } else return json({ error: 'Неизвестное действие.' }, 400);
-    state.ledger.push({ id: crypto.randomUUID(), kind, amount, label, at: now });
-    const write = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/economy/${uid}.json`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'If-Match': etag || 'null_etag' }, body: JSON.stringify(state) });
+    const ledger = Array.isArray(state.ledger) ? state.ledger : [];
+    ledger.push({ id: crypto.randomUUID(), kind, amount, label, at: now });
+    state.ledger = ledger;
+    const write = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/users/${uid}/claws.json`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'If-Match': etag || 'null_etag' }, body: JSON.stringify(state) });
     if (write.status === 412) continue;
     if (!write.ok) throw new Error(`Database ${write.status}`);
+    if (legacy) await dbRequest(env, `economy/${uid}`, 'DELETE').catch(() => {});
     await writePublicStyle(env, uid, state).catch(() => {});
     return json(state);
   }
@@ -474,6 +547,8 @@ export default {
         else if (url.pathname === '/api/links/join' && request.method === 'POST') result = await join(request, env, user);
         else if (url.pathname === '/api/links/join-public' && request.method === 'POST') result = await joinPublic(request, env, user);
         else if (url.pathname === '/api/chats/direct' && request.method === 'POST') result = await createDirect(request, env, user);
+        else if (url.pathname === '/api/chats/icon' && request.method === 'POST') result = await uploadChatIcon(request, env, user, url);
+        else if (url.pathname === '/api/calls/ice' && request.method === 'GET') result = await callIceConfiguration(request, env, user);
         else if (url.pathname === '/api/media' && request.method === 'POST') result = await uploadMedia(request, env, user, url);
         else if (url.pathname === '/api/media/share' && request.method === 'POST') result = await shareMedia(request, env, user);
         else if (url.pathname === '/api/media/forward' && request.method === 'POST') result = await forwardMedia(request, env, user);
