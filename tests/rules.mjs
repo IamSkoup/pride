@@ -122,5 +122,52 @@ try {
   await assertSucceeds(alice.ref('chatMembers/group_test/bob').set('moderator'));
   await assertFails(bob.ref('messages/group_test/msg_moderation/text').set('Moderator rewrite'));
   await assertSucceeds(bob.ref('messages/group_test/msg_moderation').update({ deleted: true, text: '' }));
+  await env.withSecurityRulesDisabled(async context => {
+    await context.database().ref().update({
+      'v2/usersPublic/alice': { uid: 'alice', username: 'alice', displayName: 'Alice', migrationVersion: 2 },
+      'v2/prides/pride_test': { id: 'pride_test', title: 'Test', ownerId: 'alice' },
+      'v2/prideMembers/pride_test/alice': 'owner',
+      'v2/prideMembers/pride_test/bob': 'member',
+      'v2/userPrides/alice/pride_test': true,
+      'v2/channels/pride_test/channel_test': { id: 'channel_test', prideId: 'pride_test', title: 'general', kind: 'text' },
+      'v2/channelPrides/channel_test': 'pride_test',
+      'v2/messages/channel_test/message_test': { id: 'message_test', channelId: 'channel_test', senderId: 'alice', text: 'Hello', createdAt: Date.now() },
+      'v2/reports/pride_test/report_test': { id: 'report_test', reporterId: 'bob', reason: 'Spam', status: 'open', createdAt: Date.now() },
+      'v2/audit/pride_test/audit_test': { actorId: 'alice', action: 'channel_created', at: Date.now() },
+      'v2/bans/pride_test/carol': { actorId: 'alice', reason: 'Spam', at: Date.now() }
+    });
+  });
+  await assertSucceeds(bob.ref('v2/prides/pride_test').get());
+  await assertFails(carol.ref('v2/prides/pride_test').get());
+  await assertSucceeds(bob.ref('v2/channels/pride_test').get());
+  await assertFails(carol.ref('v2/channels/pride_test').get());
+  await assertSucceeds(bob.ref('v2/messages/channel_test').get());
+  await assertFails(carol.ref('v2/messages/channel_test').get());
+  await assertFails(bob.ref('v2/messages/channel_test/message_test').set({ text: 'Forged' }));
+  await assertFails(alice.ref('v2/prideMembers/pride_test/bob').set('admin'));
+  await assertFails(bob.ref('v2/userPrides/alice').get());
+  await assertSucceeds(alice.ref('v2/reports/pride_test').get());
+  await assertFails(bob.ref('v2/reports/pride_test').get());
+  await assertFails(bob.ref('v2/reports/pride_test/forged').set({ reason: 'fake' }));
+  await assertSucceeds(alice.ref('v2/audit/pride_test').get());
+  await assertFails(bob.ref('v2/audit/pride_test').get());
+  await assertFails(bob.ref('v2/audit/pride_test/forged').set({ action: 'fake' }));
+  await assertSucceeds(alice.ref('v2/bans/pride_test').get());
+  await assertFails(bob.ref('v2/bans/pride_test').get());
+  await assertFails(alice.ref('v2/bans/pride_test/bob').set({ reason: 'fake' }));
+  await env.withSecurityRulesDisabled(async context => {
+    await context.database().ref('v2/prideMembers/pride_test/bob').set('moderator');
+  });
+  await assertSucceeds(bob.ref('v2/reports/pride_test').get());
+  await assertFails(bob.ref('v2/audit/pride_test').get());
+  await assertFails(bob.ref('v2/bans/pride_test').get());
+  await env.withSecurityRulesDisabled(async context => {
+    await context.database().ref('v2/bans/pride_test/bob').set({ actorId: 'alice', at: Date.now(), reason: 'Ban during join' });
+  });
+  await assertFails(bob.ref('v2/prides/pride_test').get());
+  await assertFails(bob.ref('v2/messages/channel_test').get());
+  await assertFails(bob.ref('v2/reports/pride_test').get());
+  await assertSucceeds(alice.ref('v2/drafts/alice/channel_test').set('Saved draft'));
+  await assertFails(bob.ref('v2/drafts/alice/channel_test').get());
   console.log('Firebase rules: access checks passed');
 } finally { await env.cleanup(); }

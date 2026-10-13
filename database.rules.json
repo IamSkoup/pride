@@ -577,6 +577,71 @@
       ".read": "auth != null",
       ".write": false
     },
+    "v2": {
+      ".read": false,
+      ".write": false,
+      "usersPublic": {
+        "$uid": { ".read": "auth != null", ".write": false }
+      },
+      "migrations": {
+        "$uid": { ".read": "auth != null && auth.uid === $uid", ".write": false }
+      },
+      "userPrides": {
+        "$uid": { ".read": "auth != null && auth.uid === $uid", ".write": false }
+      },
+      "prides": {
+        "$prideId": { ".read": "auth != null && root.child('v2/prideMembers').child($prideId).child(auth.uid).exists() && !root.child('v2/bans').child($prideId).child(auth.uid).exists()", ".write": false }
+      },
+      "prideMembers": {
+        "$prideId": { ".read": "auth != null && root.child('v2/prideMembers').child($prideId).child(auth.uid).exists() && !root.child('v2/bans').child($prideId).child(auth.uid).exists()", ".write": false }
+      },
+      "channels": {
+        "$prideId": { ".read": "auth != null && root.child('v2/prideMembers').child($prideId).child(auth.uid).exists() && !root.child('v2/bans').child($prideId).child(auth.uid).exists()", ".write": false }
+      },
+      "channelPrides": {
+        "$channelId": { ".read": "auth != null && root.child('v2/prideMembers').child(data.val()).child(auth.uid).exists() && !root.child('v2/bans').child(data.val()).child(auth.uid).exists()", ".write": false }
+      },
+      "messages": {
+        "$channelId": {
+          ".read": "auth != null && root.child('v2/prideMembers').child(root.child('v2/channelPrides').child($channelId).val()).child(auth.uid).exists() && !root.child('v2/bans').child(root.child('v2/channelPrides').child($channelId).val()).child(auth.uid).exists()",
+          ".write": false,
+          ".indexOn": ["createdAt"]
+        }
+      },
+      "activity": {
+        "$prideId": {
+          ".read": "auth != null && root.child('v2/prideMembers').child($prideId).child(auth.uid).exists() && !root.child('v2/bans').child($prideId).child(auth.uid).exists()",
+          ".write": false,
+          ".indexOn": ["at"]
+        }
+      },
+      "reports": {
+        "$prideId": {
+          ".read": "auth != null && !root.child('v2/bans').child($prideId).child(auth.uid).exists() && (root.child('v2/prideMembers').child($prideId).child(auth.uid).val() === 'owner' || root.child('v2/prideMembers').child($prideId).child(auth.uid).val() === 'admin' || root.child('v2/prideMembers').child($prideId).child(auth.uid).val() === 'moderator')",
+          ".write": false,
+          ".indexOn": ["createdAt"]
+        }
+      },
+      "audit": {
+        "$prideId": {
+          ".read": "auth != null && !root.child('v2/bans').child($prideId).child(auth.uid).exists() && (root.child('v2/prideMembers').child($prideId).child(auth.uid).val() === 'owner' || root.child('v2/prideMembers').child($prideId).child(auth.uid).val() === 'admin')",
+          ".write": false,
+          ".indexOn": ["at"]
+        }
+      },
+      "bans": {
+        "$prideId": {
+          ".read": "auth != null && !root.child('v2/bans').child($prideId).child(auth.uid).exists() && (root.child('v2/prideMembers').child($prideId).child(auth.uid).val() === 'owner' || root.child('v2/prideMembers').child($prideId).child(auth.uid).val() === 'admin')",
+          ".write": false
+        }
+      },
+      "drafts": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          "$channelId": { ".write": "auth != null && auth.uid === $uid", ".validate": "newData.isString() && newData.val().length <= 8000" }
+        }
+      }
+    },
     "publicProfileStyles": {
       ".read": "auth != null",
       ".write": false

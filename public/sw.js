@@ -1,4 +1,4 @@
-const CACHE = 'pride-shell-v4';
+const CACHE = 'pride-shell-v5';
 const BASE = new URL('.', self.location.href).pathname;
 const SHELL = ['','offline.html','icon.svg','icon-192.png','icon-512.png','manifest.webmanifest'].map(path => `${BASE}${path}`);
 self.addEventListener('install', event => { event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL))); self.skipWaiting(); });

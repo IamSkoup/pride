@@ -1,3 +1,6 @@
+import { canAssign, canModerate, canPost, hasPermission, type PrideRole } from './v2-permissions.ts';
+import { migrateProfile, needsProfileMigration, type LegacyProfile } from './v2-migration.ts';
+
 type Env = {
   FIREBASE_PROJECT_ID: string;
   FIREBASE_DATABASE_URL: string;
@@ -71,6 +74,9 @@ async function limited(env: Env, request: Request, bucket: string, maximum: numb
 }
 function safeId(value: unknown) { return typeof value === 'string' && /^[a-zA-Z0-9_-]{5,150}$/.test(value); }
 function safeUsername(value: unknown) { return typeof value === 'string' && /^[a-z0-9_]{3,24}$/.test(value); }
+function auditPath(prideId: string, actorId: string, action: string, detail: Record<string, unknown> = {}) {
+  return { [`v2/audit/${prideId}/${crypto.randomUUID()}`]: { actorId, action, at: Date.now(), ...detail } };
+}
 async function resolveUsername(request: Request, env: Env) {
   if (await limited(env, request, 'login', 10, 60)) return json({ error: 'Too many attempts' }, 429);
   const input = await request.json().catch(() => ({})) as { username?: string; password?: string };
@@ -112,6 +118,163 @@ async function joinPublic(request: Request, env: Env, user: AuthUser) {
   return json({ chatId: input.chatId });
 }
 async function memberRole(env: Env, chatId: string, uid: string) { return dbRequest<string | null>(env, `chatMembers/${chatId}/${uid}`); }
+async function v2Request(request: Request, env: Env, user: AuthUser, action: string) {
+  if (await limited(env, request, `v2:${action}:${user.uid}`, action === 'message' ? 120 : action === 'report' ? 10 : 30, 60)) return json({ error: 'Слишком много запросов. Попробуйте позже.' }, 429);
+  const input = await request.json().catch(() => ({})) as Record<string, unknown>;
+  if (action === 'bootstrap') {
+    const existing = await dbRequest<{ migrationVersion?: number } | null>(env, `v2/usersPublic/${user.uid}`);
+    const legacy = await dbRequest<LegacyProfile | null>(env, `users/${user.uid}`);
+    if (!legacy) return json({ error: 'Профиль не найден.' }, 404);
+    const profile = migrateProfile(user.uid, legacy);
+    if (!needsProfileMigration(existing)) {
+      const current = existing as typeof profile;
+      if (current.username !== profile.username || current.displayName !== profile.displayName || current.avatar !== profile.avatar || current.bio !== profile.bio) await dbRequest(env, `v2/usersPublic/${user.uid}`, 'PUT', profile);
+      return json({ migrated: false, version: 2 });
+    }
+    await dbRequest(env, '', 'PATCH', { [`v2/usersPublic/${user.uid}`]: profile, [`v2/migrations/${user.uid}`]: { version: 2, completedAt: Date.now(), source: 'legacy-users' } });
+    return json({ migrated: true, version: 2 });
+  }
+  if (action === 'profile-sync') {
+    const legacy = await dbRequest<LegacyProfile | null>(env, `users/${user.uid}`);
+    if (!legacy) return json({ error: 'Профиль не найден.' }, 404);
+    await dbRequest(env, `v2/usersPublic/${user.uid}`, 'PUT', migrateProfile(user.uid, legacy));
+    return json({ ok: true });
+  }
+  if (action === 'user-search') {
+    const query = typeof input.query === 'string' ? input.query.trim().replace(/^@/, '').toLowerCase() : '';
+    if (!/^[a-z0-9_]{2,24}$/.test(query)) return json({ users: [] });
+    const token = await accessToken(env);
+    const params = new URLSearchParams({ orderBy: JSON.stringify('$key'), startAt: JSON.stringify(query), endAt: JSON.stringify(`${query}\uf8ff`), limitToFirst: '10' });
+    const response = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/usernames.json?${params}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!response.ok) throw new Error(`Database ${response.status}`);
+    const claims = await response.json() as Record<string, { uid?: string }> | null;
+    const users = await Promise.all(Object.values(claims || {}).filter(claim => safeId(claim.uid)).map(async claim => dbRequest<{ uid: string; username: string; displayName: string; avatar?: string } | null>(env, `publicProfiles/${claim.uid}`)));
+    return json({ users: users.filter(Boolean).map(profile => ({ uid: profile!.uid, username: profile!.username, displayName: profile!.displayName, avatar: profile!.avatar || '' })) });
+  }
+  if (action === 'pride') {
+    const title = typeof input.title === 'string' ? input.title.trim().slice(0, 64) : '';
+    if (!title) return json({ error: 'Введите название Прайда.' }, 400);
+    const prideId = crypto.randomUUID(); const channelId = crypto.randomUUID(); const now = Date.now();
+    const code = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
+    await dbRequest(env, '', 'PATCH', {
+      [`v2/prides/${prideId}`]: { id: prideId, title, description: '', ownerId: user.uid, createdAt: now, inviteCode: code, migrationVersion: 2 },
+      [`v2/prideMembers/${prideId}/${user.uid}`]: 'owner',
+      [`v2/userPrides/${user.uid}/${prideId}`]: true,
+      [`v2/channels/${prideId}/${channelId}`]: { id: channelId, prideId, title: 'общая-тропа', kind: 'text', createdAt: now },
+      [`v2/channelPrides/${channelId}`]: prideId,
+      ...auditPath(prideId, user.uid, 'pride_created', { channelId }),
+    });
+    return json({ prideId, channelId });
+  }
+  if (!safeId(input.prideId)) return json({ error: 'Некорректный Прайд.' }, 400);
+  const prideId = input.prideId;
+  const role = await dbRequest<PrideRole | null>(env, `v2/prideMembers/${prideId}/${user.uid}`);
+  if (action === 'join') {
+    const pride = await dbRequest<{ inviteCode?: string } | null>(env, `v2/prides/${prideId}`);
+    if (!pride?.inviteCode || typeof input.code !== 'string' || input.code !== pride.inviteCode) return json({ error: 'Зов недействителен.' }, 404);
+    const banned = await dbRequest<unknown | null>(env, `v2/bans/${prideId}/${user.uid}`);
+    if (banned) return json({ error: 'Доступ к Прайду закрыт.' }, 403);
+    if (!role) await dbRequest(env, '', 'PATCH', { [`v2/prideMembers/${prideId}/${user.uid}`]: 'member', [`v2/userPrides/${user.uid}/${prideId}`]: true, ...auditPath(prideId, user.uid, 'member_joined') });
+    return json({ prideId });
+  }
+  if (role && await dbRequest<unknown | null>(env, `v2/bans/${prideId}/${user.uid}`)) return json({ error: 'Доступ к Прайду закрыт.' }, 403);
+  if (action === 'channel') {
+    if (!hasPermission(role, 'manage_channels')) return json({ error: 'Недостаточно прав.' }, 403);
+    const title = typeof input.title === 'string' ? input.title.trim().slice(0, 48) : '';
+    const kind = input.kind === 'chronicle' ? 'chronicle' : input.kind === 'text' ? 'text' : null;
+    if (!title || !kind) return json({ error: 'Укажите название и тип Тропы.' }, 400);
+    const channelId = crypto.randomUUID();
+    await dbRequest(env, '', 'PATCH', { [`v2/channels/${prideId}/${channelId}`]: { id: channelId, prideId, title, kind, createdAt: Date.now() }, [`v2/channelPrides/${channelId}`]: prideId, ...auditPath(prideId, user.uid, 'channel_created', { channelId, title, kind }) });
+    return json({ channelId });
+  }
+  if (action === 'role') {
+    const targetId = input.targetId;
+    if (!safeId(targetId) || (input.role !== 'admin' && input.role !== 'moderator' && input.role !== 'member')) return json({ error: 'Некорректный ранг.' }, 400);
+    const targetRole = await dbRequest<PrideRole | null>(env, `v2/prideMembers/${prideId}/${targetId}`);
+    if (!canAssign(role, targetRole, input.role)) return json({ error: 'Изменять ранги может только владелец.' }, 403);
+    if (await dbRequest<unknown | null>(env, `v2/bans/${prideId}/${targetId}`)) return json({ error: 'Участник заблокирован.' }, 409);
+    await dbRequest(env, '', 'PATCH', { [`v2/prideMembers/${prideId}/${targetId}`]: input.role, ...auditPath(prideId, user.uid, 'role_changed', { targetId, previousRole: targetRole, nextRole: input.role }) });
+    return json({ ok: true });
+  }
+  if (action === 'kick' || action === 'ban') {
+    if (!safeId(input.targetId)) return json({ error: 'Некорректный участник.' }, 400);
+    const targetRole = await dbRequest<PrideRole | null>(env, `v2/prideMembers/${prideId}/${input.targetId}`);
+    if (!canModerate(role, targetRole, action)) return json({ error: 'Недостаточно прав.' }, 403);
+    const reason = typeof input.reason === 'string' ? input.reason.trim().slice(0, 500) : '';
+    await dbRequest(env, '', 'PATCH', {
+      [`v2/prideMembers/${prideId}/${input.targetId}`]: null,
+      [`v2/userPrides/${input.targetId}/${prideId}`]: null,
+      ...(action === 'ban' ? { [`v2/bans/${prideId}/${input.targetId}`]: { actorId: user.uid, at: Date.now(), reason } } : {}),
+      ...auditPath(prideId, user.uid, action === 'ban' ? 'member_banned' : 'member_kicked', { targetId: input.targetId, reason }),
+    });
+    return json({ ok: true });
+  }
+  if (action === 'unban') {
+    if (!hasPermission(role, 'ban_members') || !safeId(input.targetId)) return json({ error: 'Недостаточно прав.' }, 403);
+    const banned = await dbRequest<unknown | null>(env, `v2/bans/${prideId}/${input.targetId}`);
+    if (!banned) return json({ error: 'Участник не заблокирован.' }, 404);
+    await dbRequest(env, '', 'PATCH', { [`v2/bans/${prideId}/${input.targetId}`]: null, [`v2/prideMembers/${prideId}/${input.targetId}`]: null, [`v2/userPrides/${input.targetId}/${prideId}`]: null, ...auditPath(prideId, user.uid, 'member_unbanned', { targetId: input.targetId }) });
+    return json({ ok: true });
+  }
+  if (action === 'resolve-report') {
+    if (!hasPermission(role, 'review_reports') || !safeId(input.reportId)) return json({ error: 'Недостаточно прав.' }, 403);
+    const report = await dbRequest<{ status?: string } | null>(env, `v2/reports/${prideId}/${input.reportId}`);
+    if (!report) return json({ error: 'Жалоба не найдена.' }, 404);
+    if (report.status === 'resolved') return json({ ok: true });
+    await dbRequest(env, '', 'PATCH', { [`v2/reports/${prideId}/${input.reportId}/status`]: 'resolved', [`v2/reports/${prideId}/${input.reportId}/resolvedBy`]: user.uid, [`v2/reports/${prideId}/${input.reportId}/resolvedAt`]: Date.now(), ...auditPath(prideId, user.uid, 'report_resolved', { reportId: input.reportId }) });
+    return json({ ok: true });
+  }
+  if (action === 'message' || action === 'react' || action === 'edit' || action === 'delete' || action === 'report') {
+    if (!safeId(input.channelId) || !safeId(input.messageId)) return json({ error: 'Некорректное сообщение.' }, 400);
+    const channel = await dbRequest<{ kind: 'text' | 'chronicle' } | null>(env, `v2/channels/${prideId}/${input.channelId}`);
+    if (!channel || !role) return json({ error: 'Нет доступа к Тропе.' }, 403);
+    const path = `v2/messages/${input.channelId}/${input.messageId}`;
+    if (action !== 'message') {
+      const previous = await dbRequest<{ senderId?: string; deleted?: boolean; text?: string } | null>(env, path);
+      if (!previous || previous.deleted) return json({ error: 'Сообщение не найдено.' }, 404);
+      if (action === 'report') {
+        const reason = typeof input.reason === 'string' ? input.reason.trim().slice(0, 500) : '';
+        if (!reason) return json({ error: 'Укажите причину жалобы.' }, 400);
+        const reportId = crypto.randomUUID();
+        await dbRequest(env, `v2/reports/${prideId}/${reportId}`, 'PUT', { id: reportId, channelId: input.channelId, messageId: input.messageId, senderId: previous.senderId, reporterId: user.uid, reason, preview: previous.text?.slice(0, 200) || '', status: 'open', createdAt: Date.now() });
+        return json({ reportId });
+      }
+      if (action === 'react') {
+        if (!hasPermission(role, 'add_reactions')) return json({ error: 'Недостаточно прав.' }, 403);
+        const emoji = typeof input.emoji === 'string' ? input.emoji : '';
+        if (emoji && !['❤️', '🔥', '👏', '👍'].includes(emoji)) return json({ error: 'Недопустимая реакция.' }, 400);
+        await dbRequest(env, `${path}/reactions/${user.uid}`, 'PUT', emoji || null);
+        return json({ ok: true });
+      }
+      if (previous.senderId !== user.uid && !(action === 'delete' && hasPermission(role, 'manage_messages'))) return json({ error: 'Недостаточно прав.' }, 403);
+      if (action === 'edit') {
+        const text = typeof input.text === 'string' ? input.text.trim().slice(0, 8000) : '';
+        if (!text) return json({ error: 'Введите сообщение.' }, 400);
+        await dbRequest(env, path, 'PATCH', { text, editedAt: Date.now() });
+        await dbRequest(env, `v2/activity/${prideId}/${input.messageId}/preview`, 'PUT', text.slice(0, 120));
+      } else {
+        await dbRequest(env, '', 'PATCH', { [`${path}/text`]: '', [`${path}/deleted`]: true, [`${path}/reactions`]: null, [`v2/activity/${prideId}/${input.messageId}`]: null, ...auditPath(prideId, user.uid, previous.senderId === user.uid ? 'message_deleted_by_author' : 'message_deleted_by_moderator', { channelId: input.channelId, messageId: input.messageId, targetId: previous.senderId }) });
+      }
+      return json({ ok: true });
+    }
+    if (!canPost(role, channel.kind)) return json({ error: 'У вас нет права писать в эту Тропу.' }, 403);
+    const message = typeof input.text === 'string' ? input.text.trim().slice(0, 8000) : '';
+    if (!message) return json({ error: 'Введите сообщение.' }, 400);
+    const token = await accessToken(env);
+    const payload = { id: input.messageId, channelId: input.channelId, senderId: user.uid, text: message, createdAt: Date.now(), ...(safeId(input.replyTo) ? { replyTo: input.replyTo } : {}) };
+    const recordActivity = async (saved: typeof payload) => dbRequest(env, `v2/activity/${prideId}/${input.messageId}`, 'PUT', { id: input.messageId, channelId: input.channelId, senderId: saved.senderId, preview: saved.text.slice(0, 120), at: saved.createdAt });
+    const response = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/${path}.json`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'If-Match': 'null_etag' }, body: JSON.stringify(payload) });
+    if (response.status === 412) {
+      const previous = await dbRequest<typeof payload | null>(env, path);
+      if (previous?.senderId === user.uid) { await recordActivity(previous); return json({ messageId: input.messageId, duplicate: true }); }
+      return json({ error: 'Конфликт идентификатора.' }, 409);
+    }
+    if (!response.ok) throw new Error(`Database ${response.status}`);
+    await recordActivity(payload);
+    return json({ messageId: input.messageId });
+  }
+  return json({ error: 'Not found' }, 404);
+}
 async function createDirect(request: Request, env: Env, user: AuthUser) {
   if (await limited(env, request, `dm:${user.uid}`, 30, 3600)) return json({ error: 'Too many chats' }, 429);
   const input = await request.json().catch(() => ({})) as { otherUid?: string };
@@ -304,7 +467,7 @@ async function pushMessage(request: Request, env: Env, user: AuthUser) {
   }
   return json({ delivered });
 }
-type Economy = { balance: number; subscription?: { tier: string; expiresAt: number }; frames?: Record<string, number>; equippedFrame?: string; dailyAt?: number; giftsSent?: Record<string, { to: string; giftId: string }>; giftSales?: Record<string, boolean>; ledger?: Array<{ id: string; kind: string; amount: number; label: string; at: number }> };
+type Economy = { balance: number; subscription?: { tier: string; expiresAt: number }; frames?: Record<string, number>; equippedFrame?: string; dailyAt?: number; giftsSent?: Record<string, { to: string; giftId: string; sentAt?: number }>; giftSales?: Record<string, boolean>; operations?: Record<string, string>; ledger?: Array<{ id: string; kind: string; amount: number; label: string; at: number }> };
 const PLANS: Record<string, { name: string; monthly: number; yearly: number }> = {
   cheetah: { name: 'Cheetah', monthly: 53, yearly: 530 },
   leopard: { name: 'Leopard', monthly: 99, yearly: 990 },
@@ -351,7 +514,8 @@ async function economyRequest(request: Request, env: Env, user: AuthUser) {
   const uid = user.uid;
   if (request.method === 'GET') return json((await dbRequest<Economy | null>(env, `economy/${uid}`)) || { balance: 0, ledger: [] });
   if (await limited(env, request, `economy:${uid}`, 15, 60)) return json({ error: 'Слишком много операций. Попробуйте через минуту.' }, 429);
-  const input = await request.json().catch(() => ({})) as { action?: string; tier?: string; period?: string; frame?: string; equipped?: string };
+  const input = await request.json().catch(() => ({})) as { action?: string; tier?: string; period?: string; frame?: string; equipped?: string; operationId?: string };
+  if (input.operationId !== undefined && !safeId(input.operationId)) return json({ error: 'Некорректный ключ операции.' }, 400);
   const now = Date.now();
   for (let attempt = 0; attempt < 6; attempt++) {
     const token = await accessToken(env);
@@ -360,10 +524,11 @@ async function economyRequest(request: Request, env: Env, user: AuthUser) {
     const etag = response.headers.get('ETag');
     const current = ((await response.json()) || { balance: 0, ledger: [] }) as Economy;
     const state: Economy = { ...current, balance: Math.max(0, Number(current.balance) || 0), ledger: Array.isArray(current.ledger) ? current.ledger.slice(-99) : [] };
+    if (input.operationId && state.operations?.[input.operationId]) return state.operations[input.operationId] === input.action ? json(state) : json({ error: 'Ключ операции уже использован.' }, 409);
     let amount = 0, kind = '', label = '';
     if (input.action === 'daily') {
       if (state.dailyAt && now - state.dailyAt < 20 * 60 * 60 * 1000) return json({ error: 'Ежедневную награду можно забрать раз в день.' }, 409);
-      amount = -3; kind = 'daily'; label = 'Награда за возвращение'; state.dailyAt = now; state.balance += 3;
+      amount = 3; kind = 'daily'; label = 'Награда за возвращение'; state.dailyAt = now; state.balance += 3;
     } else if (input.action === 'subscribe') {
       const plan = input.tier ? PLANS[input.tier] : undefined;
       if (!plan || (input.period !== 'month' && input.period !== 'year')) return json({ error: 'Неизвестный тариф.' }, 400);
@@ -386,7 +551,8 @@ async function economyRequest(request: Request, env: Env, user: AuthUser) {
       state.equippedFrame = frame || undefined;
       amount = 0; kind = 'style'; label = frame ? `Выбрано: ${FRAMES[frame]?.name || frame}` : 'Снята рамка';
     } else return json({ error: 'Неизвестное действие.' }, 400);
-    state.ledger.push({ id: crypto.randomUUID(), kind, amount, label, at: now });
+    if (input.operationId) state.operations = { ...state.operations, [input.operationId]: input.action || '' };
+    state.ledger.push({ id: input.operationId || crypto.randomUUID(), kind, amount, label, at: now });
     const write = await fetch(`${env.FIREBASE_DATABASE_URL.replace(/\/$/, '')}/economy/${uid}.json`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'If-Match': etag || 'null_etag' }, body: JSON.stringify(state) });
     if (write.status === 412) continue;
     if (!write.ok) throw new Error(`Database ${write.status}`);
@@ -414,7 +580,7 @@ async function giftRequest(request: Request, env: Env, user: AuthUser, action: s
         if (old) { if (old.to !== recipientId || old.giftId !== input.giftId) throw new Error('ID подарка уже использован.'); return; }
         if (state.balance < product.price) throw new Error('Недостаточно Claws для подарка.');
         state.balance -= product.price;
-        state.giftsSent = { ...state.giftsSent, [input.instanceId!]: { to: recipientId, giftId: input.giftId! } };
+        state.giftsSent = { ...state.giftsSent, [input.instanceId!]: { to: recipientId, giftId: input.giftId!, sentAt: Date.now() } };
         state.ledger!.push({ id: input.instanceId!, kind: 'gift_sent', amount: -product.price, label: `Подарок · ${product.name}`, at: Date.now() });
       });
     } catch (error) {
@@ -423,11 +589,13 @@ async function giftRequest(request: Request, env: Env, user: AuthUser, action: s
       if (reason === 'ID подарка уже использован.') return json({ error: reason }, 409);
       throw error;
     }
-    const createdAt = Date.now();
+    const createdAt = sent.giftsSent?.[input.instanceId!]?.sentAt || Date.now();
     const gift = { id: input.giftId, instanceId: input.instanceId, senderId: user.uid, recipientId, price: product.price, sentAt: createdAt };
-    await dbRequest(env, `receivedGifts/${recipientId}/${input.instanceId}`, 'PUT', { ...gift, visible: false, sold: false });
-    await dbRequest(env, `messages/${input.chatId}/${input.instanceId}`, 'PUT', { id: input.instanceId, chatId: input.chatId, senderId: user.uid, text: `Подарок: ${product.name}`, type: 'gift', gift, createdAt });
-    await dbRequest(env, `chatActivity/${input.chatId}`, 'PUT', { updatedAt: createdAt, lastText: `Подарок · ${product.name}`, lastSenderId: user.uid });
+    if (!(await dbRequest(env, `receivedGifts/${recipientId}/${input.instanceId}`))) await dbRequest(env, `receivedGifts/${recipientId}/${input.instanceId}`, 'PUT', { ...gift, visible: false, sold: false });
+    if (!(await dbRequest(env, `messages/${input.chatId}/${input.instanceId}`))) {
+      await dbRequest(env, `messages/${input.chatId}/${input.instanceId}`, 'PUT', { id: input.instanceId, chatId: input.chatId, senderId: user.uid, text: `Подарок: ${product.name}`, type: 'gift', gift, createdAt });
+      await dbRequest(env, `chatActivity/${input.chatId}`, 'PUT', { updatedAt: createdAt, lastText: `Подарок · ${product.name}`, lastSenderId: user.uid });
+    }
     return json({ ok: true, balance: sent.balance });
   }
   if (!safeId(input.instanceId)) return json({ error: 'Подарок не найден.' }, 400);
@@ -471,6 +639,7 @@ export default {
       else {
         const user = await verifyUser(request, env);
         if (!user) result = json({ error: 'Unauthorized' }, 401);
+        else if (url.pathname.startsWith('/api/v2/') && request.method === 'POST') result = await v2Request(request, env, user, url.pathname.slice('/api/v2/'.length));
         else if (url.pathname === '/api/links/join' && request.method === 'POST') result = await join(request, env, user);
         else if (url.pathname === '/api/links/join-public' && request.method === 'POST') result = await joinPublic(request, env, user);
         else if (url.pathname === '/api/chats/direct' && request.method === 'POST') result = await createDirect(request, env, user);

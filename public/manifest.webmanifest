@@ -1,12 +1,12 @@
 {
-  "name": "Pride Messenger",
+  "name": "Pride Messenger 2.0",
   "short_name": "Pride",
-  "description": "Разговоры в одном месте",
+  "description": "Разговоры находят свою территорию",
   "start_url": "/pride/",
   "scope": "/pride/",
   "display": "standalone",
-  "background_color": "#181613",
-  "theme_color": "#181613",
+  "background_color": "#1b211e",
+  "theme_color": "#1b211e",
   "icons": [
     {"src":"/pride/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
     {"src":"/pride/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
