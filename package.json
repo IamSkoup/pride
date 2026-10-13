@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build && node scripts/copy-spa-fallback.mjs",
     "preview": "vite preview --host 0.0.0.0",
     "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
     "test:rules": "node tests/rules.mjs",
     "test:theme": "node --experimental-strip-types --test tests/theme.test.ts",
     "test:entitlements": "node --experimental-strip-types --test tests/entitlements.test.ts",
