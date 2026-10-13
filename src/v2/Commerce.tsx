@@ -43,7 +43,7 @@ export function CommercePanel({
   const [inventory, setInventory] = useState<Record<string, ReceivedGift>>({});
   const [busy, setBusy] = useState("");
   const [period, setPeriod] = useState<"month" | "year">("month");
-  useEffect(() => listen<Wallet>(`economy/${uid}`, setWallet), [uid]);
+  useEffect(() => listen<Wallet>(`users/${uid}/claws`, setWallet), [uid]);
   useEffect(
     () =>
       listen<Record<string, ReceivedGift>>(`receivedGifts/${uid}`, (value) =>
@@ -82,7 +82,7 @@ export function CommercePanel({
     });
     // A successful wallet snapshot has the operation in its ledger; a failed request keeps the key for safe retry.
     const snapshot = await get(
-      ref(requireDb(), `economy/${uid}/operations/${operationId}`),
+      ref(requireDb(), `users/${uid}/claws/operations/${operationId}`),
     ).catch(() => null);
     if (snapshot?.val() === "subscribe") localStorage.removeItem(key);
   }

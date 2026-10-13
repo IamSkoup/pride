@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { configured } from "../services/firebase";
+import { getEconomy } from "../services/economy";
 import type { Profile } from "../types";
 import { SessionProvider, SignIn, useSession } from "./Auth";
 import { CommercePanel } from "./Commerce";
@@ -123,7 +124,10 @@ function Shell() {
     [uid],
   );
   useEffect(() => {
-    if (profile) bootstrap().catch(() => {});
+    if (profile) {
+      bootstrap().catch(() => {});
+      getEconomy().catch(() => {});
+    }
   }, [profile?.uid]);
   useEffect(
     () =>

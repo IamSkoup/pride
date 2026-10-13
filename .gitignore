@@ -1,3 +1,9 @@
 node_modules/
 .wrangler/
 worker/.wrangler/
+dist/
+.env
+.env.*
+!.env.example
+firebase-debug.log
+database-debug.log

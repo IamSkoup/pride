@@ -177,7 +177,7 @@ export function ProfilePanel({
   const [username, setUsername] = useState(profile?.username || "");
   const [bio, setBio] = useState(profile?.bio || "");
   const [saving, setSaving] = useState(false);
-  useEffect(() => listen<typeof economy>(`economy/${uid}`, setEconomy), [uid]);
+  useEffect(() => listen<typeof economy>(`users/${uid}/claws`, setEconomy), [uid]);
   useEffect(() => {
     setName(profile?.displayName || "");
     setUsername(profile?.username || "");

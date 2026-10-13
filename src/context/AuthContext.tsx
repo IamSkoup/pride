@@ -19,10 +19,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => { if (user) setPresence(user.uid).catch(() => {}); }, [user?.uid]);
   useEffect(() => {
     if (!user || !profile || !db) return;
-    const publicProfile: { uid: string; username: string; displayName: string; avatar?: string } = { uid: user.uid, username: profile.username, displayName: profile.displayName };
-    if (profile.avatar) publicProfile.avatar = profile.avatar;
+    const publicProfile = {
+      uid: user.uid, username: profile.username, displayName: profile.displayName,
+      bio: profile.bio || '', cover: profile.cover || '',
+      mood: profile.mood || 'На связи', roar: profile.roar || '', roarUntil: profile.roarUntil || 0,
+      musicTitle: profile.musicTitle || '', musicUrl: profile.musicUrl || '',
+    };
+    if (profile.avatar) Object.assign(publicProfile, { avatar: profile.avatar });
     set(ref(db, `publicProfiles/${user.uid}`), publicProfile).catch(error => console.warn('Could not publish searchable profile:', error.message));
-  }, [user?.uid, profile?.username, profile?.displayName, profile?.avatar]);
+  }, [user?.uid, profile?.username, profile?.displayName, profile?.avatar, profile?.cover, profile?.bio, profile?.mood, profile?.roar, profile?.roarUntil, profile?.musicTitle, profile?.musicUrl]);
   useEffect(() => {
     if (!user) { setThemeState('night'); return; }
     const uid = user.uid;

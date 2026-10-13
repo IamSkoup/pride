@@ -28,8 +28,11 @@ export async function createSpace(me: string, kind: Exclude<ChatKind, 'dm'>, tit
 }
 export async function addMember(chatId: string, actorId: string, userId: string) {
   const database = requireDb();
+  if (userId === actorId) throw new Error('Вы уже состоите в этом пространстве.');
   const role = (await get(ref(database, `chatMembers/${chatId}/${actorId}`))).val() as Role | null;
-  if (role !== 'owner' && role !== 'admin') throw new Error('Недостаточно прав.');
+  const assignedRole = role === 'owner' || role === 'admin' ? null : (await get(ref(database, `roleAssignments/${chatId}/${actorId}`))).val() as string | null;
+  const customPermissions = assignedRole ? (await get(ref(database, `chatRoles/${chatId}/${assignedRole}/permissions`))).val() as { invite_members?: boolean } | null : null;
+  if (role !== 'owner' && role !== 'admin' && customPermissions?.invite_members !== true) throw new Error('Недостаточно прав.');
   await set(ref(database, `chatMembers/${chatId}/${userId}`), 'member');
   await set(ref(database, `userChats/${userId}/${chatId}`), true);
 }
@@ -56,7 +59,10 @@ export async function changeRole(chatId: string, actorId: string, targetId: stri
 export async function removeMember(chatId: string, actorId: string, targetId: string) {
   const database = requireDb();
   const actor = (await get(ref(database, `chatMembers/${chatId}/${actorId}`))).val();
-  if (actor !== 'owner' || targetId === actorId) throw new Error('Только владелец может удалять участников.');
+  const assignedRole = actor === 'owner' || actor === 'admin' ? null : (await get(ref(database, `roleAssignments/${chatId}/${actorId}`))).val() as string | null;
+  const customPermissions = assignedRole ? (await get(ref(database, `chatRoles/${chatId}/${assignedRole}/permissions`))).val() as { remove_members?: boolean } | null : null;
+  const creatorId = (await get(ref(database, `chats/${chatId}/creatorId`))).val();
+  if ((actor !== 'owner' && actor !== 'admin' && customPermissions?.remove_members !== true) || targetId === actorId || targetId === creatorId) throw new Error('Недостаточно прав для удаления этого участника.');
   await set(ref(database, `userChats/${targetId}/${chatId}`), null);
   await set(ref(database, `chatMembers/${chatId}/${targetId}`), null);
 }
@@ -101,7 +107,10 @@ export async function reactToMessage(chatId: string, messageId: string, uid: str
 export async function markRead(chatId: string, uid: string) {
   const database = requireDb();
   const enabled = (await get(ref(database, `userSettings/${uid}/privacy/readReceipts`))).val() !== false;
-  await set(ref(database, `readReceipts/${chatId}/${uid}`), enabled ? serverTimestamp() : null);
+  const writes: Record<string, unknown> = { [`userLastRead/${uid}/${chatId}`]: serverTimestamp() };
+  if (enabled) writes[`readReceipts/${chatId}/${uid}`] = serverTimestamp();
+  else writes[`readReceipts/${chatId}/${uid}`] = null;
+  await update(ref(database), writes);
 }
 export async function setTyping(chatId: string, uid: string, active: boolean, enabled = true) {
   await set(ref(requireDb(), `typing/${chatId}/${uid}`), active && enabled ? serverTimestamp() : null);
@@ -114,10 +123,50 @@ export async function setPresence(uid: string) {
   await set(statusRef, visible ? { online: true, lastSeen: serverTimestamp() } : { online: false, lastSeen: 0 });
 }
 export async function uploadAvatar(uid: string, file: File): Promise<string> {
-  if (!file.type.startsWith('image/') || file.size > 5 * 1024 * 1024) throw new Error('Аватар: изображение до 5 МБ.');
-  const fileRef = storageRef(requireStorage(), `users/${uid}/avatars/${crypto.randomUUID()}`);
-  await uploadBytesResumable(fileRef, file, { contentType: file.type });
+  const optimized = await optimizeImage(file, 512, 512, .84);
+  const fileRef = storageRef(requireStorage(), `users/${uid}/avatars/${crypto.randomUUID()}.webp`);
+  await uploadBytesResumable(fileRef, optimized, { contentType: 'image/webp' });
   return getDownloadURL(fileRef);
+}
+export async function uploadProfileCover(uid: string, file: File): Promise<string> {
+  const optimized = await optimizeImage(file, 1800, 900, .84, 3 * 1024 * 1024);
+  const fileRef = storageRef(requireStorage(), `users/${uid}/covers/${crypto.randomUUID()}.webp`);
+  await uploadBytesResumable(fileRef, optimized, { contentType: 'image/webp' });
+  return getDownloadURL(fileRef);
+}
+export async function uploadChatAvatar(chatId: string, file: File): Promise<string> {
+  const optimized = await optimizeImage(file, 512, 512, .84);
+  const base = import.meta.env.VITE_WORKER_URL;
+  if (!base) throw new Error('Для иконки пространства нужен Cloudflare Worker.');
+  const token = await requireAuth().currentUser?.getIdToken();
+  if (!token) throw new Error('Войдите снова.');
+  const response = await fetch(`${base.replace(/\/$/, '')}/api/chats/icon?chatId=${encodeURIComponent(chatId)}`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/webp' }, body: optimized,
+  });
+  const payload = await response.json().catch(() => ({})) as { url?: string; error?: string };
+  if (!response.ok || !payload.url) throw new Error(payload.error || 'Не удалось загрузить иконку пространства.');
+  return payload.url;
+}
+async function optimizeImage(file: File, maxWidth: number, maxHeight: number, quality: number, maxOutputBytes = 2 * 1024 * 1024): Promise<Blob> {
+  if (!file.type.startsWith('image/') || file.size > 15 * 1024 * 1024) throw new Error('Выберите изображение размером до 15 МБ.');
+  let bitmap: ImageBitmap;
+  try { bitmap = await createImageBitmap(file); }
+  catch { throw new Error('Не удалось открыть изображение. Попробуйте JPEG, PNG или WebP.'); }
+  try {
+    const scale = Math.min(1, maxWidth / bitmap.width, maxHeight / bitmap.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Браузер не смог подготовить изображение.');
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    for (const nextQuality of [...new Set([quality, .72, .58, .44])]) {
+      const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('Не удалось сжать изображение.')), 'image/webp', nextQuality));
+      if (blob.type !== 'image/webp') throw new Error('Браузер не поддерживает WebP. Обновите браузер или попробуйте другое устройство.');
+      if (blob.size <= maxOutputBytes) return blob;
+    }
+    throw new Error(`Не удалось сжать картинку до ${Math.round(maxOutputBytes / 1024 / 1024)} МБ. Выберите другое изображение.`);
+  } finally { bitmap.close(); }
 }
 export async function uploadChatMedia(chatId: string, uid: string, file: File, onProgress?: (progress: number) => void, videoNote = false): Promise<Media> {
   const economyResponse = await apiFetch('/api/economy', { method: 'GET' });

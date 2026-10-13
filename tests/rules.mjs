@@ -19,7 +19,7 @@ try {
   for (const theme of ['day', 'evening', 'night']) await assertSucceeds(alice.ref('userSettings/alice/theme').set(theme));
   await assertFails(alice.ref('userSettings/alice/theme').set('sunset'));
   const profile = { uid: 'alice', username: 'alice', displayName: 'Alice', bio: '', createdAt: Date.now() };
-  await assertSucceeds(alice.ref('users/alice').set(profile));
+  await assertSucceeds(alice.ref().update(Object.fromEntries(Object.entries(profile).map(([key, value]) => [`users/alice/${key}`, value]))));
   await assertFails(bob.ref('users/alice/displayName').set('Hacked'));
   await assertFails(alice.ref('users/alice/role').set('admin'));
   await assertSucceeds(alice.ref('userPrivate/alice/email').set('alice@example.com'));
@@ -29,7 +29,7 @@ try {
   await assertSucceeds(alice.ref().update({ 'users/alice/username': 'alice2', 'usernames/alice': null }));
   assert.equal((await alice.ref('usernames/alice').get()).exists(), false);
   await assertSucceeds(bob.ref('usernames/bob').set({ uid: 'bob' }));
-  await assertSucceeds(bob.ref().update({ 'users/bob': { uid: 'bob', username: 'bob', displayName: 'Bob', bio: '', createdAt: Date.now() }, 'userPrivate/bob/email': 'bob@example.com', 'userSettings/bob/theme': 'night' }));
+  await assertSucceeds(bob.ref().update({ 'users/bob/uid': 'bob', 'users/bob/username': 'bob', 'users/bob/displayName': 'Bob', 'users/bob/bio': '', 'users/bob/createdAt': Date.now(), 'userPrivate/bob/email': 'bob@example.com', 'userSettings/bob/theme': 'night' }));
   await assertFails(alice.ref('userSettings/alice/theme').set('sunset'));
   await assertSucceeds(alice.ref('userSettings/alice/theme').set('evening'));
   await assertFails(alice.ref('userSettings/alice/theme').set('ultraviolet'));
