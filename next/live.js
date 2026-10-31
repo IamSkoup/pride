@@ -9,7 +9,14 @@
     const walletUrl = 'https://iamskoup.github.io/pc/';
     const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const clock = value => value ? new Date(value).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}) : '';
-    const sayError = error => error?.message || 'Не удалось выполнить действие. Попробуйте ещё раз.';
+    const sayError = error => {
+      const code=error?.code||error?.error_code;
+      if(code==='over_email_send_rate_limit'||error?.status===429)return 'Лимит писем подтверждения исчерпан. Попробуйте зарегистрироваться позже.';
+      if(code==='email_address_invalid')return 'Проверьте адрес электронной почты.';
+      if(code==='invalid_credentials')return 'Неверная почта или пароль.';
+      if(code==='user_already_exists')return 'Этот адрес уже зарегистрирован.';
+      return error?.message || 'Не удалось выполнить действие. Попробуйте ещё раз.';
+    };
     const svg = (name, size=19) => {
       const paths={chat:'<path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H7l-4 3v-6a7.5 7.5 0 1 1 17-4.5Z"/>',pride:'<path d="M12 3c4 0 7 4 7 8 0 5-3 9-7 10-4-1-7-5-7-10 0-4 3-8 7-8Z"/>',users:'<circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2"/><path d="M17 5a3 3 0 0 1 0 6m1 3a5 5 0 0 1 3 5v1"/>',gift:'<rect x="3" y="8" width="18" height="13" rx="2"/><path d="M12 8v13M3 12h18M12 8c-6 0-6-6-3-6 2 0 3 3 3 6Zm0 0c6 0 6-6 3-6-2 0-3 3-3 6Z"/>',wallet:'<rect x="2" y="5" width="20" height="16" rx="3"/><path d="M2 9h20m-6 7h3"/>',settings:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M19 5l-2 2M7 17l-2 2"/>',plus:'<path d="M12 4v16M4 12h16"/>',send:'<path d="m3 20 18-8L3 4l3 8-3 8Zm3-8h15"/>',search:'<circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/>',back:'<path d="m15 18-6-6 6-6"/>',moon:'<path d="M20 15A8 8 0 0 1 9 4 8 8 0 1 0 20 15Z"/>',sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m14 0h2M5 5l14 14M19 5 5 19"/>'};
       return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]||paths.chat}</svg>`;
