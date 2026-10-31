@@ -1,0 +1,1 @@
+Bundled browser SDK: `@supabase/supabase-js` 2.118.0, MIT licensed. Source: https://www.npmjs.com/package/@supabase/supabase-js . The bundle is vendored so GitHub Pages and the local demo do not depend on a third-party CDN at runtime. `LICENSE.supabase-js.txt` contains the upstream license.

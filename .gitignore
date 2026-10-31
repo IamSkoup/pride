@@ -1,9 +1,9 @@
-node_modules/
-.wrangler/
-worker/.wrangler/
-dist/
 .env
 .env.*
-!.env.example
-firebase-debug.log
-database-debug.log
+*.local
+*.secret
+node_modules/
+__pycache__/
+.pytest_cache/
+supabase/.temp/
+.DS_Store

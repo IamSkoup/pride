@@ -1,0 +1,1 @@
+{"name":"PrideMessenger","short_name":"Pride","description":"Общение на одной волне саванны","lang":"ru","start_url":"./","scope":"./","display":"standalone","background_color":"#0b0b0e","theme_color":"#0b0b0e","icons":[{"src":"./assets/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
